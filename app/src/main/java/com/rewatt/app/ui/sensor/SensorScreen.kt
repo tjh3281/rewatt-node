@@ -10,6 +10,14 @@ import android.graphics.Bitmap
 import android.provider.Settings
 import androidx.camera.core.Preview
 import androidx.camera.view.PreviewView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -80,9 +88,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -403,46 +408,92 @@ private fun StitchHeader(moduleOnline: Boolean) {
 
 // ── BOTTOM NAVIGATION BAR ─────────────────────────────────────────────────────
 
+/**
+ * Floating pill menu (iOS 26/27 style): a rounded, slightly see-through bar lifted off the bottom
+ * edge with a soft shadow. The selected tab sits in its own inner pill, which slides to the tapped
+ * tab. Takes the same height as the old full-width bar, so the content area doesn't shrink.
+ */
 @Composable
 private fun StitchBottomBar(
     selectedTab: StitchTab,
     onTabSelected: (StitchTab) -> Unit,
 ) {
-    NavigationBar(
-        containerColor = Color.White,
-        tonalElevation = 8.dp,
-        modifier = Modifier.height(72.dp),
+    val pill = RoundedCornerShape(50)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 10.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        StitchTab.values().forEach { tab ->
-            val selected = selectedTab == tab
-            NavigationBarItem(
-                selected = selected,
-                onClick = { onTabSelected(tab) },
-                icon = {
+        BoxWithConstraints(
+            modifier = Modifier
+                .widthIn(max = 460.dp)
+                .fillMaxWidth()
+                .height(58.dp)
+                .shadow(elevation = 14.dp, shape = pill, ambientColor = Color(0x22000000), spotColor = Color(0x33000000))
+                .clip(pill)
+                .background(Color.White.copy(alpha = 0.94f))
+                .border(0.5.dp, Color(0x14000000), pill)
+                .padding(4.dp),
+        ) {
+            val tabs = StitchTab.values()
+            val slot = maxWidth / tabs.size
+            val indicatorX by animateDpAsState(
+                targetValue = slot * selectedTab.ordinal,
+                animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
+                label = "tabIndicator",
+            )
+            // The sliding inner pill behind the selected tab.
+            Box(
+                Modifier
+                    .offset(x = indicatorX)
+                    .width(slot)
+                    .fillMaxHeight()
+                    .clip(pill)
+                    .background(Color(0xFFEDEFF2)),
+            )
+            Row(Modifier.fillMaxSize()) {
+                tabs.forEach { tab ->
+                    val selected = tab == selectedTab
+                    val tint by animateColorAsState(
+                        if (selected) Color(0xFF09090B) else Color(0xFF9CA3AF),
+                        label = "tabTint",
+                    )
                     val icon = when (tab) {
                         StitchTab.ENERGY -> Icons.Outlined.Bolt
                         StitchTab.FIRE -> Icons.Outlined.LocalFireDepartment
                         StitchTab.SECURITY -> Icons.Outlined.Shield
                         StitchTab.SETTINGS -> Icons.Outlined.Settings
                     }
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = tab.label,
-                        tint = if (selected) Color(0xFF09090B) else Color(0xFF9CA3AF),
-                    )
-                },
-                label = {
-                    Text(
-                        text = tab.label,
-                        fontSize = 10.sp,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (selected) Color(0xFF09090B) else Color(0xFF9CA3AF),
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    indicatorColor = Color(0xFFF3F4F6),
-                ),
-            )
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(pill)
+                            .selectable(
+                                selected = selected,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                role = Role.Tab,
+                                onClick = { onTabSelected(tab) },
+                            ),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = tab.label,
+                            fontSize = 9.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            letterSpacing = 0.3.sp,
+                            color = tint,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -7,8 +7,10 @@ import com.rewatt.app.data.ReWattDatabase
 import com.rewatt.app.data.TelemetryRepository
 import com.rewatt.app.data.WeatherRepository
 import com.rewatt.app.energy.EnergyStateHolder
+import com.rewatt.app.perception.LiveHeadcount
 import com.rewatt.app.perception.LivePreviewHub
 import com.rewatt.app.perception.PerceptionStateHolder
+import com.rewatt.app.perception.YoloDetector
 import com.rewatt.app.safety.FireAlarm
 import com.rewatt.app.safety.FireMonitor
 import com.rewatt.app.safety.TorchRouter
@@ -50,6 +52,14 @@ class AppGraph(context: Context) {
 
     val perceptionStateHolder: PerceptionStateHolder by lazy {
         PerceptionStateHolder()
+    }
+
+    /** The one YOLO model: loaded and closed by CameraCaptureService, shared with the live headcount. */
+    @Volatile
+    var yoloDetector: YoloDetector? = null
+
+    val liveHeadcount: LiveHeadcount by lazy {
+        LiveHeadcount(detectorProvider = { yoloDetector }, stateHolder = perceptionStateHolder)
     }
 
     // ── Energy (motion → photo → YOLO occupancy, live camera view) ──

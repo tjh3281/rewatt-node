@@ -130,6 +130,7 @@ class MainActivity : AppCompatActivity() {
                     fireAlarmState = fireAlarm,
                     energyState = energyState,
                     onLivePreviewSurface = onLivePreviewSurface,
+                    onLiveFrame = appGraph.liveHeadcount::analyze,
                     previewZoom = previewZoom,
                     onPreviewZoom = appGraph.livePreviewHub::zoomBy,
                     onDismissPhoto = { appGraph.energyStateHolder.update { it.copy(photoPinned = false) } },

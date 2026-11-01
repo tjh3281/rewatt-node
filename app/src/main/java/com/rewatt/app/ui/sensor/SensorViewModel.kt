@@ -128,7 +128,8 @@ class SensorViewModel(
             put("roomId", state.roomId)
             put("timestamp", now)
             put("presence", latest?.presence ?: false)
-            put("personCount", perception.personCount)
+            // Live headcount on the preview when it is running; otherwise the last photo's count.
+            put("personCount", perception.liveCount(now) ?: perception.personCount)
             put("lightsOn", perception.lightsOn)
             put("temperatureC", latest?.temperatureC ?: 0.0)
             put("humidityPercent", latest?.humidityPercent ?: 0.0)

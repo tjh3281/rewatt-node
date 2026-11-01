@@ -96,6 +96,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -162,6 +163,7 @@ import com.rewatt.app.energy.EnergyMonitor
 import com.rewatt.app.energy.EnergyPhase
 import com.rewatt.app.energy.EnergyUiState
 import com.rewatt.app.perception.CaptureStartSource
+import com.rewatt.app.perception.LiveHeadcount
 import com.rewatt.app.perception.ObjectDetection
 import com.rewatt.app.perception.PerceptionUiState
 import kotlin.math.abs
@@ -203,6 +205,8 @@ fun SensorScreen(
     settingsSecurityContent: @Composable () -> Unit = {},
     energyState: EnergyUiState = EnergyUiState(),
     onLivePreviewSurface: (Preview.SurfaceProvider, Boolean) -> Unit = { _, _ -> },
+    /** Live headcount: called with each frame the camera box is showing (see [LivePreview]). */
+    onLiveFrame: (suspend (Bitmap) -> Unit)? = null,
     onDismissPhoto: () -> Unit = {},
     applianceStates: ApplianceStates = ApplianceStates(),
     onUpdateAppliances: ((ApplianceStates) -> ApplianceStates) -> Unit = {},
@@ -285,6 +289,7 @@ fun SensorScreen(
                     appliances = appliances,
                     security = securityParts,
                     onLivePreviewSurface = onLivePreviewSurface,
+                    onLiveFrame = onLiveFrame,
                     onStartCamera = { onStartPerception(CaptureStartSource.Manual) },
                     onDismissPhoto = onDismissPhoto,
                     previewZoom = previewZoom,
@@ -787,6 +792,7 @@ private fun CameraTabs(
     appliances: List<ApplianceToggle>,
     security: SecurityTabParts,
     onLivePreviewSurface: (Preview.SurfaceProvider, Boolean) -> Unit,
+    onLiveFrame: (suspend (Bitmap) -> Unit)?,
     onStartCamera: () -> Unit,
     onDismissPhoto: () -> Unit,
     previewZoom: Float,
@@ -799,6 +805,7 @@ private fun CameraTabs(
     val hum = telemetry?.humidityPercent
     val tempAvailable = temp != null && usbConnected
     val humAvailable = hum != null && usbConnected
+    val liveCount = uiState.perceptionState.liveCount(uiState.nowMillis)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
@@ -810,6 +817,8 @@ private fun CameraTabs(
                 onLivePreviewSurface = onLivePreviewSurface,
                 onStartCamera = onStartCamera,
                 onDismissPhoto = onDismissPhoto,
+                onLiveFrame = onLiveFrame,
+                nowMillis = uiState.nowMillis,
                 roomChip = uiState.roomId.ifBlank { "Room1" }.takeIf { landscape && energyTab },
                 moduleOnline = usbConnected,
                 armed = security.armed && !energyTab,
@@ -861,6 +870,7 @@ private fun CameraTabs(
                             energy = energyState,
                             nowMillis = uiState.nowMillis,
                             appliances = appliances,
+                            liveCount = liveCount,
                             wide = true,
                             modifier = Modifier
                                 .weight(2f)
@@ -918,6 +928,7 @@ private fun CameraTabs(
                             energyState = energyState,
                             nowMillis = uiState.nowMillis,
                             appliances = appliances,
+                            liveCount = liveCount,
                         )
                     } else {
                         security.side(false)
@@ -1017,6 +1028,7 @@ private fun SensorBoxesRow(
     energyState: EnergyUiState,
     nowMillis: Long,
     appliances: List<ApplianceToggle>,
+    liveCount: Int?,
 ) {
     Row(
         modifier = Modifier
@@ -1052,6 +1064,7 @@ private fun SensorBoxesRow(
             energy = energyState,
             nowMillis = nowMillis,
             appliances = appliances,
+            liveCount = liveCount,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
@@ -1164,14 +1177,17 @@ private fun OccupancyCard(
     energy: EnergyUiState,
     nowMillis: Long,
     appliances: List<ApplianceToggle>,
+    liveCount: Int?,
     modifier: Modifier = Modifier,
     wide: Boolean = false,
 ) {
-    val count: Int? = energy.personCount
+    // The live headcount on the preview when it is running; otherwise the last radar-triggered photo.
+    val count: Int? = liveCount ?: energy.personCount
     val occupied = (count ?: 0) > 0
 
     val countdownLeft = energy.countdownEndsAt?.let { ((it - nowMillis + 999) / 1000).coerceAtLeast(0) }
     val (status, statusColor) = when {
+        liveCount != null -> if (occupied) "OCCUPIED" to Color(0xFFD97706) else "EMPTY" to Color(0xFF6B7280)
         energy.pausedForCctv -> "CCTV" to Color(0xFFB91C1C)
         energy.phase == EnergyPhase.ENTERING || energy.phase == EnergyPhase.LEAVING -> "CHECKING" to Color(0xFFD97706)
         energy.phase == EnergyPhase.EMPTY_COUNTDOWN -> "EMPTY ${countdownLeft ?: 0}s" to Color(0xFF6B7280)
@@ -1405,7 +1421,8 @@ private fun IlluminanceCard(perception: PerceptionUiState) {
 
 /**
  * The ONE live camera box shared by ENERGY and SECURITY. Its live view is the same composable on
- * both tabs, so switching tabs never stops or reloads it — only the overlays change:
+ * both tabs, so switching tabs never stops or reloads it — only the overlays change. The live
+ * headcount draws a box around each person on the preview and shows the count in the LIVE chip.
  *  - ENERGY: the checked photo with YOLO boxes (until tapped), capture/YOLO chip, Room1 chip in
  *    landscape.
  *  - SECURITY: ARMED chip.
@@ -1420,6 +1437,8 @@ private fun SharedCameraBox(
     onLivePreviewSurface: (Preview.SurfaceProvider, Boolean) -> Unit,
     onStartCamera: () -> Unit,
     onDismissPhoto: () -> Unit,
+    onLiveFrame: (suspend (Bitmap) -> Unit)?,
+    nowMillis: Long,
     roomChip: String?,
     moduleOnline: Boolean,
     armed: Boolean,
@@ -1431,6 +1450,7 @@ private fun SharedCameraBox(
     val frame = perception.latestFrame
     val showPhoto = energyTab && frame != null && energy.photoPinned && !energy.capturing
     val liveShown = cameraOn && !showPhoto
+    val liveCount = perception.liveCount(nowMillis).takeIf { liveShown }
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
@@ -1439,7 +1459,12 @@ private fun SharedCameraBox(
     ) {
         // Base feed — identical on both tabs.
         if (cameraOn) {
-            LivePreview(onLivePreviewSurface = onLivePreviewSurface, modifier = Modifier.fillMaxSize())
+            LivePreview(
+                onLivePreviewSurface = onLivePreviewSurface,
+                onLiveFrame = onLiveFrame,
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (liveCount != null) LivePeopleBoxes(people = perception.livePeople, modifier = Modifier.fillMaxSize())
         } else {
             Column(
                 modifier = Modifier.align(Alignment.Center),
@@ -1484,6 +1509,7 @@ private fun SharedCameraBox(
                 val n = perception.personCount
                 "YOLO · $n ${if (n == 1) "person" else "people"}" to Color(0xFF22C55E)
             }
+            liveCount != null -> "LIVE · $liveCount ${if (liveCount == 1) "person" else "people"}" to Color(0xFFEF4444)
             cameraOn -> "LIVE" to Color(0xFFEF4444)
             else -> null
         }
@@ -1558,6 +1584,23 @@ private fun ModuleMissingReminder() {
     }
 }
 
+/** A box around each person the live headcount found; boxes are normalised to the preview itself. */
+@Composable
+private fun LivePeopleBoxes(people: List<ObjectDetection>, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val stroke = 3.dp.toPx()
+        people.forEach { person ->
+            val b = person.box.clamped()
+            drawRect(
+                color = Color(0xFF22C55E),
+                topLeft = Offset(b.left * size.width, b.top * size.height),
+                size = Size((b.right - b.left) * size.width, (b.bottom - b.top) * size.height),
+                style = Stroke(width = stroke),
+            )
+        }
+    }
+}
+
 /** Small dark pill with a coloured dot on a camera box ("● LIVE", "● Room1", "● ARMED"). */
 @Composable
 private fun CameraChip(text: String, dot: Color, modifier: Modifier = Modifier) {
@@ -1576,7 +1619,7 @@ private fun CameraChip(text: String, dot: Color, modifier: Modifier = Modifier) 
                 .background(dot),
         )
         Spacer(Modifier.width(6.dp))
-        Text(text, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text(text, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false)
     }
 }
 
@@ -1619,11 +1662,14 @@ private fun FrozenFrame(frame: Bitmap?, visible: Boolean) {
  * CameraX PreviewView, publishing its surface only while the app is in the foreground. Uses a
  * TextureView (COMPATIBLE) so it is clipped exactly to the card's rounded shape. Shows the last
  * frozen live frame until the camera stream is running again (smooth tab switches).
+ * [onLiveFrame]: while streaming, the displayed frame is handed over for the live headcount, again as
+ * soon as the previous count (and its pacing pause) has finished — up to 10 times a second.
  */
 @Composable
 internal fun LivePreview(
     onLivePreviewSurface: (Preview.SurfaceProvider, Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    onLiveFrame: (suspend (Bitmap) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1649,6 +1695,21 @@ internal fun LivePreview(
         val provider = previewView.surfaceProvider
         onLivePreviewSurface(provider, true)
         onStopOrDispose { onLivePreviewSurface(provider, false) }
+    }
+    val currentOnLiveFrame by rememberUpdatedState(onLiveFrame)
+    LaunchedEffect(previewView, onLiveFrame != null) {
+        if (onLiveFrame == null) return@LaunchedEffect
+        while (true) {
+            // PreviewView.bitmap = exactly what the box shows (cropped, zoomed); null until streaming.
+            val frame = if (streaming) previewView.bitmap else null
+            val analyze = currentOnLiveFrame
+            if (frame != null && analyze != null) {
+                analyze(frame) // counts, then waits until the next frame is due (LiveHeadcount paces itself)
+            } else {
+                frame?.recycle()
+                delay(LiveHeadcount.IDLE_POLL_MS)
+            }
+        }
     }
     Box(modifier) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())

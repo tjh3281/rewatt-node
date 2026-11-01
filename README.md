@@ -206,8 +206,8 @@ Parsing lives in `telemetry/UsbDataParser.kt`; malformed lines are counted and d
 - **Android** — Kotlin, Jetpack Compose + Material 3, per-app language (English + Bahasa Melayu).
   `minSdk 26`, `target/compileSdk 36`, Java 17.
 - **Sensing** — `usb-serial-for-android` (USB CDC), CameraX.
-- **On-device AI** — TensorFlow Lite (**YOLO26n** people counting), ONNX Runtime (**InsightFace
-  buffalo_s** face check).
+- **On-device AI** — ONNX Runtime for **YOLO26n** people counting (live on the camera preview) and **InsightFace
+  buffalo_s** face check.
 - **Messaging** — HiveMQ MQTT client (TLS, port 8883).
 - **Background** — foreground services (USB sensing, camera capture, fire monitoring) that keep
   running with the screen off.
@@ -229,7 +229,7 @@ app/src/main/java/com/rewatt/app/
 ├─ perception/   CameraCaptureService, YOLO detector, live preview, exposure (lights on/off)
 ├─ data/         Telemetry + MQTT repositories, local database
 └─ ui/           SensorScreen (ENERGY / FIRE / SECURITY / SETTINGS), SetupGuideDialog, theme
-app/src/main/assets/   yolo26n-1920.tflite, face/det_500m.onnx, face/w600k_mbf.onnx
+app/src/main/assets/   yolo26n-416.onnx, face/det_500m.onnx, face/w600k_mbf.onnx
 docs/user-manual/      User guide (HTML source, build-pdf.ps1, PDF)
 ```
 

@@ -263,8 +263,8 @@ class IntrusionMonitor(
         controller: CameraCaptureController,
         dark: Boolean,
     ): Boolean {
-        // Faces first (SCRFD ≈ 0.1 s): a visible face already proves a person is there, so the slow
-        // YOLO person check (seconds at 1920 px) only runs when no face is found. Same Lane 2 outcome.
+        // Faces first (SCRFD ≈ 0.1 s): a visible face already proves a person is there, so the slower
+        // YOLO person check only runs when no face is found. Same Lane 2 outcome.
         val result = runCatching { recognizer.analyze(frame.bitmap, settings.matchThreshold) }
             .onFailure { Log.e(TAG, "Face check failed", it) }
             .getOrNull() ?: return false

@@ -11,7 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.PowerManager
+
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -34,10 +34,10 @@ import kotlinx.coroutines.launch
  * Foreground service that owns the camera so it keeps working while the screen is off. It runs two
  * independent features that share one [CameraCaptureController]:
  *
- * - **Occupancy perception**: an exact alarm ([AlarmManager.setExactAndAllowWhileIdle]) anchored to
- *   the next 10-minute wall-clock mark, with a partial wake lock held across the capture — this is
- *   what fixes the missed 3:10 AM capture. Results go to [PerceptionStateHolder] (dashboard) and
- *   [TelemetryRepository] (sync/forecast).
+ * - **Occupancy perception**: loads YOLO (shared through [AppGraph.yoloDetector] with the live
+ *   headcount on the camera preview, [LiveHeadcount]) and runs the ENERGY flow, which takes a photo
+ *   when the radar sees someone enter / leave. Results go to [PerceptionStateHolder] (dashboard) and
+ *   [TelemetryRepository] (sync).
  * - **CCTV security** ([IntrusionMonitor]): while Armed, radar motion opens events that record video
  *   and check faces against FAMILY.
  *
@@ -50,7 +50,6 @@ class CameraCaptureService : LifecycleService() {
     private lateinit var stateHolder: PerceptionStateHolder
     private lateinit var telemetryRepository: TelemetryRepository
     private lateinit var alarmManager: AlarmManager
-    private lateinit var powerManager: PowerManager
 
     private var cameraController: CameraCaptureController? = null
 
@@ -71,7 +70,6 @@ class CameraCaptureService : LifecycleService() {
         stateHolder = appGraph.perceptionStateHolder
         telemetryRepository = appGraph.telemetryRepository
         alarmManager = getSystemService(AlarmManager::class.java)
-        powerManager = getSystemService(PowerManager::class.java)
 
         startAsForegroundService()
     }
@@ -87,10 +85,8 @@ class CameraCaptureService : LifecycleService() {
             return START_STICKY
         }
         when (intent.action) {
-            ACTION_CAPTURE -> {
-                if (!started && appGraph.securitySettings.perceptionActive) startPerception()
-                if (started) runCaptureCycle()
-            }
+            // A wake-up left over from the old 10-minute photo schedule: cancel it, take no photo.
+            ACTION_CAPTURE -> runCatching { alarmManager.cancel(capturePendingIntent()) }
             ACTION_CAPTURE_NOW -> {
                 ensureController()
                 cameraController?.captureNow()
@@ -122,10 +118,10 @@ class CameraCaptureService : LifecycleService() {
         }
         ensureController()
         loadDetectors()
-        // Do NOT capture immediately — the first capture fires at the next 10-minute boundary.
-        // Immediate capture is only done via the explicit "Capture Now" (ACTION_CAPTURE_NOW)
-        // or by the ENERGY flow when the radar sees someone enter / leave.
-        scheduleNextCaptureAlarm()
+        // No scheduled photos: the headcount runs live on the camera preview. Photos are only taken
+        // by "Capture Now" (ACTION_CAPTURE_NOW) or the ENERGY flow when the radar sees someone enter
+        // / leave. Clear any alarm still pending from the old 10-minute schedule.
+        runCatching { alarmManager.cancel(capturePendingIntent()) }
         energyMonitor = EnergyMonitor(
             scope = serviceScope,
             perception = stateHolder,
@@ -210,7 +206,8 @@ class CameraCaptureService : LifecycleService() {
             runCatching { YoloDetector.create(applicationContext) }
                 .onSuccess {
                     yoloDetector = it
-                    stateHolder.update { s -> s.copy(yoloMessage = "YOLO loaded; analyzing one frame every 10 minutes.") }
+                    appGraph.yoloDetector = it
+                    stateHolder.update { s -> s.copy(yoloMessage = "YOLO loaded; counting people live on the camera preview.") }
                 }
                 .onFailure { error ->
                     stateHolder.update { s -> s.copy(yoloMessage = "YOLO model failed to load: ${error.message ?: error::class.java.simpleName}") }
@@ -219,34 +216,7 @@ class CameraCaptureService : LifecycleService() {
         }
     }
 
-    private fun runCaptureCycle() {
-        // Hold the CPU just long enough to complete the capture, even in Doze. The timeout is a
-        // safety net; capture is asynchronous and typically finishes in a few seconds.
-        val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG)
-        runCatching { wakeLock.acquire(WAKELOCK_TIMEOUT_MS) }
-        try {
-            cameraController?.capture()
-        } finally {
-            scheduleNextCaptureAlarm()
-            if (wakeLock.isHeld) runCatching { wakeLock.release() }
-        }
-    }
-
-    /** Schedule the next exact, Doze-exempt wakeup at the next 10-minute wall-clock mark. */
-    private fun scheduleNextCaptureAlarm() {
-        val triggerAt = System.currentTimeMillis() + millisUntilNextBoundary(INFERENCE_INTERVAL_MINUTES)
-        runCatching {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                triggerAt,
-                capturePendingIntent(),
-            )
-        }.onFailure {
-            // Falls back to a windowed alarm if exact alarms are not permitted.
-            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, capturePendingIntent())
-        }
-    }
-
+    /** The old 10-minute photo alarm's intent — kept only so a pending one can be cancelled. */
     private fun capturePendingIntent(): PendingIntent =
         PendingIntent.getService(
             this,
@@ -390,6 +360,7 @@ class CameraCaptureService : LifecycleService() {
         if (appGraph.torchRouter.controller === cameraController) appGraph.torchRouter.controller = null
         cameraController?.close()
         cameraController = null
+        appGraph.yoloDetector = null
         yoloDetector?.close()
         yoloDetector = null
         serviceScope.cancel()
@@ -420,9 +391,6 @@ class CameraCaptureService : LifecycleService() {
         private const val NOTIFICATION_CHANNEL_ID = "rewatt_perception"
         private const val NOTIFICATION_ID = 73
         private const val CAPTURE_REQUEST_CODE = 71
-        private const val WAKELOCK_TAG = "rewatt:capture"
-        private const val WAKELOCK_TIMEOUT_MS = 90_000L
-        private const val INFERENCE_INTERVAL_MINUTES = 10
 
         const val ACTION_CAPTURE = "com.rewatt.app.action.CAPTURE"
         const val ACTION_CAPTURE_NOW = "com.rewatt.app.action.CAPTURE_NOW"

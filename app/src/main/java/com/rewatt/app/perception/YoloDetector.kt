@@ -1,28 +1,35 @@
 package com.rewatt.app.perception
 
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
+import ai.onnxruntime.TensorInfo
 import android.content.Context
 import android.graphics.Bitmap
-import java.io.ByteArrayInputStream
+import android.util.Log
 import java.io.Closeable
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.zip.ZipInputStream
-import org.json.JSONObject
-import org.tensorflow.lite.Interpreter
+import java.nio.FloatBuffer
 
+/**
+ * YOLO person detector on ONNX Runtime (the same runtime as the face models). The model is the stock
+ * Ultralytics YOLO26n (COCO) exported end-to-end (NMS-free) at 416 px:
+ *  - input  `[1, 3, 416, 416]`: RGB, 0..1, channels first;
+ *  - output `[1, 300, 6]`: x1, y1, x2, y2 (input pixels), confidence, class — see [YoloPostProcessor].
+ */
 class YoloDetector private constructor(
-    private val interpreter: Interpreter,
+    private val env: OrtEnvironment,
+    private val session: OrtSession,
     private val labels: List<String>,
 ) : Closeable {
-    // The model's expected square input size (e.g. 640 or 1280), read from its input tensor so
-    // models of different resolutions can be swapped via the dropdown without code changes.
-    val inputSize: Int =
-        interpreter.getInputTensor(0).shape().let { shape ->
-            shape.getOrNull(1)?.takeIf { it > 0 } ?: YoloPostProcessor.INPUT_SIZE
-        }
+    private val inputName: String = session.inputNames.first()
 
-    // Synchronized: the TFLite interpreter is not thread-safe and is shared by the 10-minute
-    // occupancy capture and the CCTV person check. Calls are only serialised; results are unchanged.
+    // The model's square input size (e.g. 640), read from its input tensor [1, 3, H, W].
+    val inputSize: Int =
+        (session.inputInfo.getValue(inputName).info as? TensorInfo)?.shape?.getOrNull(2)?.toInt()
+            ?.takeIf { it > 0 } ?: YoloPostProcessor.INPUT_SIZE
+
+    // Synchronized: shared by the live headcount, the ENERGY photo and the CCTV person check. Calls are
+    // only serialised; results are unchanged.
     @Synchronized
     fun detect(bitmap: Bitmap, gridSize: Int = DEFAULT_GRID): List<ObjectDetection> {
         val fullWidth = bitmap.width
@@ -52,78 +59,86 @@ class YoloDetector private constructor(
         return LectureHallPerceptionFilter.filterYoloDetections(nms(merged))
     }
 
-    /** Run the interpreter on an already-square (inputSize) bitmap; boxes are normalized to it. */
+    /** Run the model on an already-square (inputSize) bitmap; boxes are normalized to it. */
     private fun runOnSquare(square: Bitmap): List<ObjectDetection> {
-        val output = Array(1) { Array(300) { FloatArray(6) } }
-        interpreter.run(square.toYoloInputBuffer(inputSize), output)
-        return YoloPostProcessor.process(output[0], labels, inputSize = inputSize)
+        val shape = longArrayOf(1, 3, inputSize.toLong(), inputSize.toLong())
+        OnnxTensor.createTensor(env, FloatBuffer.wrap(square.toChwFloats(inputSize)), shape).use { input ->
+            session.run(mapOf(inputName to input)).use { outputs ->
+                @Suppress("UNCHECKED_CAST")
+                val rows = ((outputs.get(0) as OnnxTensor).value as Array<Array<FloatArray>>)[0]
+                return YoloPostProcessor.process(rows, labels, inputSize = inputSize)
+            }
+        }
     }
 
     @Synchronized
     override fun close() {
-        interpreter.close()
+        session.close()
     }
 
     companion object {
-        const val MODEL_ASSET = "yolo26n-1920.tflite"
+        private const val TAG = "YoloDetector"
+
+        /** Stock Ultralytics YOLO26n (COCO), end-to-end ONNX at 416 px: fast enough for live counting. */
+        const val MODEL_ASSET = "yolo26n-416.onnx"
+
+        /** CPU threads for inference (most phones, even old ones, have at least 4 cores). */
+        private const val NUM_THREADS = 4
 
         fun create(context: Context, assetName: String = MODEL_ASSET): YoloDetector {
+            val env = OrtEnvironment.getEnvironment()
             val modelBytes = AssetModelLoader.loadBytes(context, assetName)
-            val labels = readLabelsFromMetadata(modelBytes).ifEmpty { fallbackCocoLabels }
-            val modelBuffer = ByteBuffer
-                .allocateDirect(modelBytes.size)
-                .order(ByteOrder.nativeOrder())
-                .apply {
-                    put(modelBytes)
-                    rewind()
-                }
-
-            return YoloDetector(
-                interpreter = Interpreter(modelBuffer, Interpreter.Options().setNumThreads(2)),
-                labels = labels,
-            )
+            val session = createSession(env, modelBytes)
+            val labels = labelsFromMetadata(session).ifEmpty { fallbackCocoLabels }
+            return YoloDetector(env, session, labels)
         }
 
-        private fun readLabelsFromMetadata(modelBytes: ByteArray): List<String> =
+        /** XNNPACK (fast ARM kernels) when this ONNX Runtime build supports it, else the plain CPU engine. */
+        private fun createSession(env: OrtEnvironment, modelBytes: ByteArray): OrtSession =
             runCatching {
-                ZipInputStream(ByteArrayInputStream(modelBytes)).use { zip ->
-                    generateSequence { zip.nextEntry }
-                        .firstOrNull { it.name == "metadata.json" }
-                        ?.let { zip.readBytes().toString(Charsets.UTF_8) }
-                        ?.let(::labelsFromMetadataJson)
-                        .orEmpty()
+                env.createSession(
+                    modelBytes,
+                    OrtSession.SessionOptions().apply {
+                        // XNNPACK does the threading itself; the session's own pool then stays at 1.
+                        addXnnpack(mapOf("intra_op_num_threads" to NUM_THREADS.toString()))
+                        setIntraOpNumThreads(1)
+                    },
+                )
+            }.onSuccess { Log.i(TAG, "YOLO on ONNX Runtime + XNNPACK") }
+                .getOrElse { error ->
+                    Log.w(TAG, "XNNPACK unavailable (${error.message}); using the CPU engine")
+                    env.createSession(modelBytes, OrtSession.SessionOptions().apply { setIntraOpNumThreads(NUM_THREADS) })
                 }
-            }.getOrDefault(emptyList())
 
-        private fun labelsFromMetadataJson(json: String): List<String> {
-            val names = JSONObject(json).getJSONObject("names")
-            return names.keys().asSequence()
-                .mapNotNull { key -> key.toIntOrNull()?.let { it to names.getString(key) } }
-                .sortedBy { it.first }
-                .map { it.second }
-                .toList()
-        }
+        /** Class names from the Ultralytics export metadata, e.g. `{0: 'person', 1: 'bicycle', …}`. */
+        private fun labelsFromMetadata(session: OrtSession): List<String> =
+            runCatching {
+                val names = session.metadata.customMetadata["names"].orEmpty()
+                Regex("""(\d+):\s*'([^']*)'""").findAll(names)
+                    .map { it.groupValues[1].toInt() to it.groupValues[2] }
+                    .sortedBy { it.first }
+                    .map { it.second }
+                    .toList()
+            }.getOrDefault(emptyList())
     }
 }
 
-// Encodes an already-square [size] bitmap (produced by letterbox) as an RGB float32 [0,1] buffer.
-private fun Bitmap.toYoloInputBuffer(size: Int): ByteBuffer {
+// Encodes an already-square [size] bitmap (produced by letterbox) as planar RGB float32 0..1 (C, H, W).
+private fun Bitmap.toChwFloats(size: Int): FloatArray {
     val square = if (width == size && height == size) this else Bitmap.createScaledBitmap(this, size, size, true)
     val pixels = IntArray(size * size)
     square.getPixels(pixels, 0, size, 0, 0, size, size)
     if (square !== this) square.recycle()
 
-    return ByteBuffer
-        .allocateDirect(4 * pixels.size * 3)
-        .order(ByteOrder.nativeOrder())
-        .apply {
-            pixels.forEach { pixel ->
-                putFloat(((pixel shr 16) and 0xFF) / 255f)
-                putFloat(((pixel shr 8) and 0xFF) / 255f)
-                putFloat((pixel and 0xFF) / 255f)
-            }
-            rewind()
-        }
+    val plane = size * size
+    val out = FloatArray(3 * plane)
+    for (i in 0 until plane) {
+        val pixel = pixels[i]
+        out[i] = ((pixel shr 16) and 0xFF) / 255f
+        out[plane + i] = ((pixel shr 8) and 0xFF) / 255f
+        out[2 * plane + i] = (pixel and 0xFF) / 255f
+    }
+    return out
 }
 
 private val fallbackCocoLabels = listOf(

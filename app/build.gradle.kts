@@ -62,7 +62,7 @@ android {
     }
 
     androidResources {
-        noCompress += listOf("tflite", "onnx")
+        noCompress += listOf("onnx")
     }
 
     compileOptions {
@@ -133,7 +133,6 @@ dependencies {
 
     implementation(libs.play.services.location)
 
-    implementation(libs.tensorflow.lite)
     implementation(libs.onnxruntime.android)
 
     implementation(platform(libs.firebase.bom))

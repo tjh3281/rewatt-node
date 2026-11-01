@@ -53,7 +53,7 @@ class PerceptionViewModel(
     }
 
     fun selectYoloModel(model: YoloModel) {
-        // Only the yolo26n-1920 model ships now; the selection is purely cosmetic for the debug UI.
+        // Only the yolo26n-416 model ships now; the selection is purely cosmetic for the debug UI.
         stateHolder.update { it.copy(selectedYoloModel = model) }
     }
 

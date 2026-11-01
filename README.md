@@ -71,7 +71,7 @@ One Android app runs on the mounted phone:
 | **ENERGY** | Temperature, humidity, headcount (EMPTY at 0), lights · fan · AC status, and a live camera view. |
 | **FIRE** | NORMAL / FIRE ALERT, with VOC Index and NOx Index gauges. |
 | **SECURITY** | ARMED switch, live camera view, and alert history. |
-| **SETTINGS** | MQTT configuration, Quick Setup Guide, security permissions, FAMILY faces, and alarm tests. |
+| **SETTINGS** | MQTT configuration, Quick Setup Guide, security permissions, registered people, and alarm tests. |
 
 The header badge shows **ONLINE** while the module is connected and **OFFLINE**
 when it is not. Turn the phone sideways on ENERGY or SECURITY for a bigger live view.
@@ -190,7 +190,7 @@ for the features currently connected in this Android node checkout.
               ▼                                     ▼
    ENERGY OPTIMISATION                     SECURITY CAMERA
    presence → headcount (YOLO26n)          presence → person seen (YOLO26n)
-   + temperature & humidity (SHT31)        → face check (InsightFace buffalo_s)
+   + temperature & humidity (SHT31)        → face check (InsightFace buffalo_sc)
    → right AC setting                      → family: stays silent
    → no one for 5 min: appliances off      → stranger: siren, flashing light + alert
 
@@ -263,31 +263,34 @@ and [FireMonitor.kt](app/src/main/java/com/rewatt/app/safety/FireMonitor.kt).
 
 **Setup:**
 
-1. Disarm security, then add five front-camera photos of each family member under
-   **Settings → FAMILY faces**.
+1. Disarm security, then open **Settings → Registered people → Register a person**.
+   Enter the person's name, then take five guided front-camera photos and/or pick up
+   to five photos from the gallery. Each photo must show exactly one clear face.
 2. Turn on **ARMED** in **SECURITY** when leaving or at night.
 3. Allow full-screen alerts. On Xiaomi/HyperOS, also allow **Show on Lock screen**
    and **Display pop-up windows while running in the background**.
 
-While armed, fresh radar motion starts an event and face checks run approximately
-every two seconds:
-
-![Security flow: radar starts an event, person and face checks distinguish no person, no usable face, family, and unrecognized faces; the event ends after five seconds without presence](docs/user-manual/assets/security-flow.png)
-
-<details>
-<summary>Read the security flow as text</summary>
+While armed, fresh radar motion starts an event and wakes a **live face check**: the
+camera streams ~1280×960 frames and the SECURITY tab shows the live view with a box
+per face (green = registered person's name, amber = checking, red = UNKNOWN) and the
+measured frame rate. The target is about 10 fps; the real rate depends on the phone
+and is logged every five seconds (`adb logcat -s IntrusionMonitor`).
 
 ```text
-radar motion → event starts → photo every ~2 s
-  no person                → keep checking (nothing recorded)
-  person, no face          → record a clip + "You are being recorded" (no siren)
-  face → check against FAMILY
-        ✓ family           → silent; the clip is deleted
-        ✗ stranger/masked  → "You are being recorded" + siren + flashing torch + alert + MQTT
+radar motion → event starts → live frames (target ~10 fps)
+  every frame: SCRFD finds faces → each face is tracked from frame to frame
+  recognition only runs for new faces and for faces still being checked
+    ✓ registered person          → silent; any clip is stopped and the event is deleted
+    ✗ unknown/masked for ~1 s    → "You are being recorded" + siren + flashing torch + alert + MQTT
+  no face for ~4 s → YOLO check → person: record a clip + "You are being recorded" (no siren)
+                                  no person: keep watching (nothing recorded)
 nobody for 5 s → event ends, camera released
 ```
 
-</details>
+A face counts as unknown only after at least three failed checks spanning one
+second, so a single blurry or side-on frame does not sound the alarm. Checking
+continues for the whole event, so a stranger who follows a registered person still
+triggers the alarm. In a dark room the torch turns on when the live check starts.
 
 An event ends after five seconds without presence. Evidence is stored under
 `files/security/events/<eventId>/`, with video parts, face-check photos, and
@@ -295,9 +298,12 @@ An event ends after five seconds without presence. Evidence is stored under
 keep storage within 2 GiB; the active event is preserved.
 
 Video is recorded as FHD 30 fps clips with audio in five-minute parts, subject to
-device camera capabilities. Face-check models are bundled at
+device camera capabilities; if the phone cannot record beside the live check, it
+falls back to HD, then SD, then photos only. Occupancy photos that fall due during
+a live check are skipped. Face-check models are bundled at
 `app/src/main/assets/face/det_500m.onnx` and `face/w600k_mbf.onnx`, from
-InsightFace [buffalo_s](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_s.zip),
+InsightFace [buffalo_sc](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip)
+(the detection + recognition pack; the files are byte-identical to those in buffalo_s),
 and run with ONNX Runtime. See [model terms](#license-and-model-terms).
 
 After a reboot or force-stop, open the app again to resume camera operation.
@@ -314,7 +320,7 @@ username, and password, then select **Save & Connect**. The default port is
 | --- | --- |
 | `rewatt/sensors/<room>/telemetry` | Sensor readings, radar, headcount, light estimate, battery; also an on-demand base64 JPEG when sending the current photo. |
 | `rewatt/sensors/<room>/fire` | Gas alert and VOC / NOx values. |
-| `rewatt/sensors/<room>/intrusion` | Intrusion details, match scores, and a base64 JPEG. |
+| `rewatt/sensors/<room>/intrusion` | Intrusion details, match scores, per-face status/name (`faces`), and a base64 JPEG. |
 | `rewatt/sensors/<room>/security/event` | End-of-event summary. |
 
 A separate consumer or dashboard can subscribe to these topics. This repository
@@ -341,7 +347,7 @@ Keep local credentials out of version control.
 
 - **Android:** `minSdk 26`, `target/compileSdk 36`, Java 17; English and Bahasa Melayu.
 - **Sensing:** `usb-serial-for-android` for USB CDC and CameraX for camera capture.
-- **On-device AI:** TensorFlow Lite for YOLO26n and ONNX Runtime for InsightFace buffalo_s.
+- **On-device AI:** TensorFlow Lite for YOLO26n and ONNX Runtime for InsightFace buffalo_sc.
 - **Messaging:** HiveMQ MQTT client, with TLS on the default port 8883.
 - **Background operation:** foreground services for USB sensing and camera capture;
   process-wide gas monitoring while readings arrive, including with the screen off.
@@ -361,7 +367,7 @@ app/src/main/java/com/rewatt/app/
 ├─ telemetry/    UsbDataParser, radar / gas readings, freshness
 ├─ energy/       EnergyMonitor, appliance + occupancy state
 ├─ safety/       FireMonitor, FireAlarm, torch
-├─ security/     IntrusionMonitor, face recognition, FAMILY faces, alarm, evidence
+├─ security/     IntrusionMonitor (live check), FaceTracker, face recognition, registered people, alarm, evidence
 ├─ perception/   CameraCaptureService, YOLO, live preview, light estimation
 ├─ data/         Telemetry + MQTT repositories, local database
 └─ ui/           SensorScreen (ENERGY / FIRE / SECURITY / SETTINGS), setup, theme
@@ -408,7 +414,7 @@ using hardware people already own.
 
 No repository-level license file is included. Bundled pretrained models have
 separate terms: the existing project documentation identifies the InsightFace
-`buffalo_s` weights as **non-commercial research only**. Review the upstream
+`buffalo_sc` / `buffalo_s` weights as **non-commercial research only**. Review the upstream
 [InsightFace model terms](https://github.com/deepinsight/insightface/tree/master/python-package#license)
 and [Ultralytics model licensing](https://github.com/ultralytics/ultralytics#license)
 before redistribution or commercial use.

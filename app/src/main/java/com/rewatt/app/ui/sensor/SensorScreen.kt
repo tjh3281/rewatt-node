@@ -498,8 +498,8 @@ private fun SecurityShieldBadge(security: SecurityUiState) {
 
 /**
  * VOC Index and NOx Index gauges (Sensirion Gas Index values — unitless, 0..500). They show "--"
- * when there is no recent reading (no SGP41 on the module). Cards turn red above the fire threshold
- * or while the fire alarm is active.
+ * when there is no recent reading (no SGP41 on the module) or while the sensor warms up. Cards turn
+ * red above the fire threshold or while the fire alarm is active.
  */
 @Composable
 private fun GasGaugeRow(
@@ -507,7 +507,7 @@ private fun GasGaugeRow(
     nowMillis: Long,
     fireAlarmActive: Boolean,
 ) {
-    val fresh = gas?.takeIf { nowMillis - it.capturedAtMillis <= FireThreshold.STALE_AFTER_MS }
+    val fresh = gas?.takeIf { nowMillis - it.capturedAtMillis <= FireThreshold.STALE_AFTER_MS && !it.isWarmingUp }
     val voc = fresh?.vocIndex
     val nox = fresh?.noxIndex
     Row(
@@ -687,6 +687,18 @@ private fun StitchFireTab(
             nowMillis = uiState.nowMillis,
             fireAlarmActive = alarm,
         )
+
+        val gas = uiState.sensorState.latestGas
+        val warmingUp = gas != null && gas.isWarmingUp &&
+            uiState.nowMillis - gas.capturedAtMillis <= FireThreshold.STALE_AFTER_MS
+        if (warmingUp) {
+            Text(
+                text = "Gas sensor warming up — readings start in about a minute.",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFD97706),
+            )
+        }
 
         Text(
             text = "Alarm when VOC Index ≥ ${FireThreshold.VOC_INDEX} or NOx Index ≥ ${FireThreshold.NOX_INDEX} for 2 s",

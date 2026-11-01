@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
  * on another tab. Always active whenever gas data arrives.
  *
  * Rule: a ~1 s sample is a hit when VOC Index ≥ 130 OR NOx Index ≥ 5; 2 consecutive hits sound the
- * alarm. Any normal sample or a sensor error (-1) resets the count. Samples closer than ~1 s are
+ * alarm. Any normal sample, a sensor error (-1) or a warm-up sample (0) resets the count. Samples closer than ~1 s are
  * skipped because the JSON line repeats the last gas value at the radar's packet rate.
  *
  * After Dismiss the alarm re-arms once the air has been normal for 10 s, or after 5 min if it is
@@ -59,7 +59,8 @@ class FireMonitor(
         if (now - lastCountedAt < MIN_SAMPLE_GAP_MS) return@synchronized
         lastCountedAt = now
 
-        if (gas.isError) {
+        Log.d(TAG, "gas voc=${gas.vocIndex} nox=${gas.noxIndex}")
+        if (gas.isError || gas.isWarmingUp) {
             hits = 0
             return@synchronized
         }

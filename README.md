@@ -231,6 +231,7 @@ app/src/main/java/com/rewatt/app/
 └─ ui/           SensorScreen (ENERGY / FIRE / SECURITY / SETTINGS), SetupGuideDialog, theme
 app/src/main/assets/   yolo26n-416.onnx, face/det_500m.onnx, face/w600k_mbf.onnx
 docs/user-manual/      User guide (HTML source, build-pdf.ps1, PDF)
+firmware/reWatt_Sensor_SGP41/   ESP32-C6 module sketch (SHT30 + SGP41 + LD2412 → one JSON line per second over USB)
 ```
 
 ---

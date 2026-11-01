@@ -24,8 +24,13 @@ object UsbDataParser {
                 else -> 0
             }
 
-            val temp = root.optDouble("temp", Double.NaN).takeIf { !it.isNaN() }?.toFloat()
-            val hum  = root.optDouble("hum",  Double.NaN).takeIf { !it.isNaN() }?.toFloat()
+            // The firmware sends 0.00 / 0.00 until the SHT3x gives its first reading (and keeps doing so
+            // if the sensor never answers), so both exactly 0 means "no reading", not a freezing dry room.
+            val rawTemp = root.optDouble("temp", Double.NaN).takeIf { !it.isNaN() }
+            val rawHum  = root.optDouble("hum",  Double.NaN).takeIf { !it.isNaN() }
+            val climateMissing = rawTemp == 0.0 && rawHum == 0.0
+            val temp = rawTemp?.takeUnless { climateMissing }?.toFloat()
+            val hum  = rawHum?.takeUnless { climateMissing }?.toFloat()
 
             RadarTelemetry(
                 presence              = state > 0,

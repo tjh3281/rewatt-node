@@ -3,7 +3,8 @@ package com.rewatt.app.telemetry
 /**
  * Optional Sensirion SGP41 reading (Gas Index Algorithm output — unitless indices, not ppm/ppb).
  * VOC Index 1..500 with ~100 = this room's normal air; NOx Index 1..500 with ~1 = normal.
- * A `-1` from the firmware (read failure) is stored as `null`.
+ * A `-1` from the firmware (read failure) is stored as `null`. The algorithm outputs `0` while it warms
+ * up (about the first minute after power-on), so a 0 means "no value yet", not clean air.
  */
 data class GasReading(
     val vocIndex: Int?,
@@ -11,6 +12,9 @@ data class GasReading(
     val capturedAtMillis: Long,
 ) {
     val isError: Boolean get() = vocIndex == null && noxIndex == null
+
+    /** SGP41 still warming up: the Gas Index Algorithm reports 0 until it has a baseline. */
+    val isWarmingUp: Boolean get() = vocIndex == 0 || noxIndex == 0
 
     val isFireHit: Boolean
         get() = (vocIndex ?: 0) >= FireThreshold.VOC_INDEX || (noxIndex ?: 0) >= FireThreshold.NOX_INDEX

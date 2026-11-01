@@ -138,7 +138,7 @@ class SensorViewModel(
             put("batteryPercent", batteryPct)
             // Optional SGP41 — only included when a recent reading exists, so existing consumers see no change.
             state.sensorState.latestGas
-                ?.takeIf { now - it.capturedAtMillis <= FireThreshold.STALE_AFTER_MS }
+                ?.takeIf { now - it.capturedAtMillis <= FireThreshold.STALE_AFTER_MS && !it.isWarmingUp }
                 ?.let { gas ->
                     gas.vocIndex?.let { put("vocIndex", it) }
                     gas.noxIndex?.let { put("noxIndex", it) }

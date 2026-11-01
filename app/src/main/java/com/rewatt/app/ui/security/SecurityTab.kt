@@ -76,7 +76,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rewatt.app.R
 import com.rewatt.app.security.EventResult
+import com.rewatt.app.security.FaceSample
 import com.rewatt.app.security.MatchCalibration
+import com.rewatt.app.security.Person
 import com.rewatt.app.security.SecurityEvent
 import com.rewatt.app.security.SecurityUiState
 import java.io.File
@@ -224,9 +226,11 @@ fun SecuritySettingsSection(
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     val faces by viewModel.familyFaces.collectAsStateWithLifecycle()
+    val people by viewModel.people.collectAsStateWithLifecycle()
     val threshold by viewModel.threshold.collectAsStateWithLifecycle()
     val phoneSetupConfirmed by viewModel.phoneSetupConfirmed.collectAsStateWithLifecycle()
     var showRegistration by remember { mutableStateOf(false) }
+    var registrationFor by remember { mutableStateOf<Person?>(null) }
 
     var resumeTick by remember { mutableIntStateOf(0) }
     LifecycleResumeEffect(Unit) {
@@ -306,43 +310,40 @@ fun SecuritySettingsSection(
                     Spacer(Modifier.width(8.dp))
                     Column(Modifier.weight(1f)) {
                         Text(stringResource(R.string.sec_family_title), fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Ink)
-                        Text(stringResource(R.string.sec_family_count, faces.size), fontSize = 12.sp, color = Muted)
+                        Text(stringResource(R.string.sec_family_count, people.size, faces.size), fontSize = 12.sp, color = Muted)
                     }
                     if (faces.isNotEmpty() && !state.armed) {
                         TextButton(onClick = viewModel::clearFaces) { Text(stringResource(R.string.sec_clear_all), color = Danger) }
                     }
                 }
-                if (faces.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        faces.forEach { face ->
-                            Box {
-                                FileImage(
-                                    path = face.thumbnailPath,
-                                    maxSide = 112,
-                                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)),
-                                )
-                                if (!state.armed) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .size(20.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xCC000000))
-                                            .clickable { viewModel.deleteFace(face.id) },
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.sec_delete), tint = Color.White, modifier = Modifier.size(14.dp))
-                                    }
+                people.forEach { person ->
+                    key(person.id) {
+                        PersonRow(
+                            person = person,
+                            samples = faces.filter { it.personId == person.id },
+                            editable = !state.armed,
+                            onDeleteSample = viewModel::deleteFace,
+                            onDeletePerson = { viewModel.deletePerson(person.id) },
+                            onAddPhotos = {
+                                if (cameraGranted) {
+                                    registrationFor = person
+                                    showRegistration = true
+                                } else {
+                                    onRequestCamera()
                                 }
-                            }
-                        }
+                            },
+                        )
                     }
                 }
                 Button(
-                    onClick = { if (cameraGranted) showRegistration = true else onRequestCamera() },
+                    onClick = {
+                        if (cameraGranted) {
+                            registrationFor = null
+                            showRegistration = true
+                        } else {
+                            onRequestCamera()
+                        }
+                    },
                     enabled = !state.armed,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(14.dp),
@@ -482,7 +483,7 @@ fun SecuritySettingsSection(
     }
 
     if (showRegistration) {
-        FaceRegistrationDialog(viewModel = viewModel, onClose = { showRegistration = false })
+        FaceRegistrationDialog(viewModel = viewModel, onClose = { showRegistration = false }, existing = registrationFor)
     }
 }
 
@@ -669,6 +670,66 @@ private fun EventDetailDialog(
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger),
             ) {
                 Text(stringResource(R.string.sec_delete), fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/** One registered person: name, photo count, thumbnails (each deletable), add photos / delete person. */
+@Composable
+private fun PersonRow(
+    person: Person,
+    samples: List<FaceSample>,
+    editable: Boolean,
+    onDeleteSample: (String) -> Unit,
+    onDeletePerson: () -> Unit,
+    onAddPhotos: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(person.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Ink)
+                Text(stringResource(R.string.sec_person_photos, samples.size), fontSize = 12.sp, color = Muted)
+            }
+            if (editable) {
+                TextButton(onClick = onAddPhotos) { Text(stringResource(R.string.sec_add_photos), color = Ink) }
+                TextButton(onClick = onDeletePerson) { Text(stringResource(R.string.sec_delete), color = Danger) }
+            }
+        }
+        if (samples.isNotEmpty()) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                samples.forEach { face ->
+                    Box {
+                        FileImage(
+                            path = face.thumbnailPath,
+                            maxSide = 112,
+                            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)),
+                        )
+                        if (editable) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xCC000000))
+                                    .clickable { onDeleteSample(face.id) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.sec_delete), tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+                }
             }
         }
     }

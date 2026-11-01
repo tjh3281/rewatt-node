@@ -170,6 +170,7 @@ import kotlinx.coroutines.delay
 import com.rewatt.app.safety.FireAlarmState
 import com.rewatt.app.security.EventPhase
 import com.rewatt.app.security.SecurityUiState
+import com.rewatt.app.ui.security.LiveFaceOverlay
 import com.rewatt.app.telemetry.FireThreshold
 import com.rewatt.app.telemetry.GasLevel
 import com.rewatt.app.telemetry.GasReading
@@ -813,6 +814,7 @@ private fun CameraTabs(
                 roomChip = uiState.roomId.ifBlank { "Room1" }.takeIf { landscape && energyTab },
                 moduleOnline = usbConnected,
                 armed = security.armed && !energyTab,
+                securityState = securityState,
                 zoomRatio = previewZoom,
                 onZoom = onPreviewZoom,
                 modifier = modifier,
@@ -1423,11 +1425,14 @@ private fun SharedCameraBox(
     roomChip: String?,
     moduleOnline: Boolean,
     armed: Boolean,
+    securityState: SecurityUiState,
     zoomRatio: Float,
     onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val cameraOn = perception.isRunning
+    // While armed the camera service is up, so SECURITY shows the live view even without occupancy capture.
+    val cameraOn = perception.isRunning || (!energyTab && securityState.armed)
+    val liveCheck = !energyTab && securityState.liveActive
     val frame = perception.latestFrame
     val showPhoto = energyTab && frame != null && energy.photoPinned && !energy.capturing
     val liveShown = cameraOn && !showPhoto
@@ -1477,8 +1482,22 @@ private fun SharedCameraBox(
             )
         }
 
+        if (liveCheck) {
+            LiveFaceOverlay(
+                faces = securityState.liveFaces,
+                frameWidth = securityState.liveFrameWidth,
+                frameHeight = securityState.liveFrameHeight,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
         // Status chip (top-left)
         val chip: Pair<String, Color>? = when {
+            liveCheck -> stringResource(
+                R.string.live_chip,
+                securityState.liveFps ?: 0f,
+                securityState.liveFaces.size,
+            ) to Color(0xFFEF4444)
             energyTab && energy.capturing -> "Capturing photo…" to Color(0xFFF59E0B)
             showPhoto -> {
                 val n = perception.personCount

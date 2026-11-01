@@ -10,6 +10,9 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
 import androidx.camera.view.PreviewView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +22,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
@@ -27,6 +32,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -43,6 +50,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,6 +62,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.rewatt.app.R
 import com.rewatt.app.security.FaceRecognizer
+import com.rewatt.app.security.Person
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -60,22 +70,58 @@ import kotlin.coroutines.resume
 
 private const val SHOTS_PER_PERSON = 5
 
-/** Front-camera registration: 5 guided shots, each must contain exactly one face, saved as FAMILY. */
+/**
+ * Registers a named person: first their name (skipped when adding photos to [existing]), then 5 guided
+ * front-camera shots and/or up to 5 photos from the gallery. Every photo must contain exactly one face.
+ * A person created here who ends up with no photos is removed again on close.
+ */
 @Composable
 fun FaceRegistrationDialog(
     viewModel: SecurityViewModel,
     onClose: () -> Unit,
+    existing: Person? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val imageCapture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
     val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
+    var person by remember { mutableStateOf(existing) }
+    var createdHere by remember { mutableStateOf(false) }
+    var nameInput by remember { mutableStateOf("") }
     var shot by remember { mutableIntStateOf(1) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<Int?>(null) }
+    /** Last gallery import: photos added / photos picked. */
+    var galleryResult by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
     val finished = shot > SHOTS_PER_PERSON
+
+    val close = {
+        val created = person
+        if (createdHere && created != null && viewModel.familyFaces.value.none { it.personId == created.id }) {
+            viewModel.deletePerson(created.id)
+        }
+        onClose()
+    }
+
+    val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(SHOTS_PER_PERSON)) { uris ->
+        val target = person
+        if (target != null && uris.isNotEmpty()) {
+            busy = true
+            message = R.string.reg_checking
+            galleryResult = null
+            messageIsError = false
+            scope.launch {
+                val results = viewModel.registerFromGallery(target.id, uris)
+                val added = results.count { it is FaceRecognizer.RegistrationResult.Ok }
+                message = null
+                galleryResult = added to uris.size
+                messageIsError = added == 0
+                busy = false
+            }
+        }
+    }
 
     DisposableEffect(Unit) {
         viewModel.beginRegistration()
@@ -98,7 +144,7 @@ fun FaceRegistrationDialog(
         }
     }
 
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -109,15 +155,30 @@ fun FaceRegistrationDialog(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    stringResource(R.string.reg_title),
+                    person?.let { stringResource(R.string.reg_title_person, it.name) } ?: stringResource(R.string.reg_title),
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = onClose) {
+                IconButton(onClick = close) {
                     Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.sec_close), tint = Color.White)
                 }
+            }
+
+            if (person == null) {
+                NameStep(
+                    name = nameInput,
+                    onNameChange = { nameInput = it.take(MAX_NAME_LENGTH) },
+                    onSubmit = {
+                        val name = nameInput.trim()
+                        if (name.isNotEmpty()) {
+                            person = viewModel.addPerson(name)
+                            createdHere = true
+                        }
+                    },
+                )
+                return@Column
             }
 
             Box(
@@ -143,9 +204,13 @@ fun FaceRegistrationDialog(
                     textAlign = TextAlign.Center,
                 )
             }
-            message?.let {
+            val galleryText = galleryResult?.let { (added, picked) ->
+                val summary = stringResource(R.string.reg_gallery_result, added, picked)
+                if (added < picked) summary + "\n" + stringResource(R.string.reg_gallery_skipped) else summary
+            }
+            (message?.let { stringResource(it) } ?: galleryText)?.let {
                 Text(
-                    stringResource(it),
+                    it,
                     color = if (messageIsError) Color(0xFFFCA5A5) else Color(0xFF86EFAC),
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
@@ -156,13 +221,18 @@ fun FaceRegistrationDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(
                         onClick = {
+                            // Next person: back to the name step.
+                            person = null
+                            createdHere = false
+                            nameInput = ""
                             shot = 1
                             message = null
+                            galleryResult = null
                         },
                         modifier = Modifier.weight(1f).height(52.dp),
                     ) { Text(stringResource(R.string.reg_another), color = Color.White) }
                     Button(
-                        onClick = onClose,
+                        onClick = close,
                         modifier = Modifier.weight(1f).height(52.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF09090B)),
                     ) { Text(stringResource(R.string.reg_done), fontWeight = FontWeight.Bold) }
@@ -173,9 +243,11 @@ fun FaceRegistrationDialog(
                         busy = true
                         message = R.string.reg_checking
                         messageIsError = false
+                        galleryResult = null
+                        val target = person ?: return@Button
                         scope.launch {
                             val bitmap = imageCapture.captureBitmap(context)
-                            val result = bitmap?.let { viewModel.registerFace(it) }
+                            val result = bitmap?.let { viewModel.registerFace(target.id, it) }
                             when (result) {
                                 is FaceRecognizer.RegistrationResult.Ok -> {
                                     message = R.string.reg_saved
@@ -199,8 +271,45 @@ fun FaceRegistrationDialog(
                     Text(stringResource(R.string.reg_capture), fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 }
             }
+            OutlinedButton(
+                onClick = { pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) { Text(stringResource(R.string.reg_gallery), color = Color.White) }
         }
     }
+}
+
+/** Step 1: the person's name. */
+@Composable
+private fun NameStep(name: String, onNameChange: (String) -> Unit, onSubmit: () -> Unit) {
+    Text(stringResource(R.string.reg_name_prompt), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+    OutlinedTextField(
+        value = name,
+        onValueChange = onNameChange,
+        singleLine = true,
+        label = { Text(stringResource(R.string.reg_name_hint)) },
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { onSubmit() }),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            focusedLabelColor = Color.White,
+            unfocusedLabelColor = Color(0xFF9CA3AF),
+            focusedBorderColor = Color.White,
+            unfocusedBorderColor = Color(0xFF6B7280),
+            cursorColor = Color.White,
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Button(
+        onClick = onSubmit,
+        enabled = name.isNotBlank(),
+        modifier = Modifier.fillMaxWidth().height(56.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF09090B)),
+    ) { Text(stringResource(R.string.reg_next), fontSize = 17.sp, fontWeight = FontWeight.Bold) }
 }
 
 private fun promptFor(shot: Int): Int = when (shot) {
@@ -239,3 +348,4 @@ private suspend fun ImageCapture.captureBitmap(context: android.content.Context)
     }
 
 private const val CAMERA_HANDOFF_MS = 600L
+private const val MAX_NAME_LENGTH = 40

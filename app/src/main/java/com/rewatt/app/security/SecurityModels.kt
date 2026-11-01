@@ -27,6 +27,17 @@ data class RecognizedFace(
     /** Calibrated C(s), see [MatchCalibration]. */
     val confidence: Float,
     val isFamily: Boolean,
+    /** Registered person with the best match (shown only when [isFamily]). */
+    val name: String? = null,
+)
+
+/** One face's best match against every registered sample. */
+data class FaceMatch(
+    val personId: String?,
+    val name: String?,
+    val similarity: Float,
+    val confidence: Float,
+    val isFamily: Boolean,
 )
 
 sealed interface FaceCheckResult {
@@ -46,6 +57,25 @@ sealed interface FaceCheckResult {
         val confidence: Float get() = strangest.confidence
     }
 }
+
+/** One upright frame of the live security stream (~1280×960); [meanLuma] 0–255 stands in for EXIF EV. */
+class LiveFrame(
+    val bitmap: Bitmap,
+    val meanLuma: Float,
+    val capturedAtMillis: Long,
+)
+
+/** A tracked live face for the camera overlay; box normalised (0..1) to the live frame. */
+data class LiveFaceUi(
+    val trackId: Int,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val status: TrackStatus,
+    val name: String?,
+    val confidence: Float?,
+)
 
 /** A still photo captured for the security face check (never used for headcount/illuminance). */
 class SecurityFrame(
@@ -90,6 +120,13 @@ data class SecurityUiState(
     val alarmPhotoName: String? = null,
     val alarmScore: Float? = null,
     val statusMessage: String? = null,
+    /** Live face check: true while the radar-woken stream runs, with its tracked faces and speed. */
+    val liveActive: Boolean = false,
+    val liveFaces: List<LiveFaceUi> = emptyList(),
+    val liveFps: Float? = null,
+    /** Live frame size (upright), so the overlay can map boxes onto the FILL_CENTER preview. */
+    val liveFrameWidth: Int = 0,
+    val liveFrameHeight: Int = 0,
 )
 
 /** Persisted summary of one motion event (events/<id>/event.json). */
@@ -108,10 +145,17 @@ data class SecurityEvent(
     val sizeBytes: Long,
 )
 
-/** One registered FAMILY face sample. */
+/** A registered person; their face samples point at [id]. */
+data class Person(
+    val id: String,
+    val name: String,
+    val createdAtMillis: Long,
+)
+
+/** One registered face sample of a [Person]. */
 data class FaceSample(
     val id: String,
-    val label: String,
+    val personId: String,
     val createdAtMillis: Long,
     val embedding: FloatArray,
     val thumbnailPath: String,

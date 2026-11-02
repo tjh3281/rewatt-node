@@ -1,5 +1,6 @@
 package com.rewatt.app.data
 
+import android.util.Log
 import com.rewatt.app.telemetry.GasReading
 import com.rewatt.app.telemetry.PacketFreshness
 import com.rewatt.app.telemetry.RadarTelemetry
@@ -52,6 +53,9 @@ class TelemetryRepository(
     private var latestGas: GasReading? = null
 
     suspend fun acceptRawPacket(rawPacket: String, capturedAtMillis: Long = System.currentTimeMillis()) {
+        // Debug firmware also sends the raw SGP41 signals (sraw_voc / sraw_nox): log the line so they
+        // can be read over adb while testing the gas sensor. Normal firmware never hits this.
+        if (rawPacket.contains("sraw_")) Log.d("GasRaw", rawPacket.trim())
         val gas = UsbDataParser.parseGas(rawPacket, capturedAtMillis)
         if (gas != null) {
             latestGas = gas

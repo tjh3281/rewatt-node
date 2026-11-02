@@ -39,6 +39,10 @@ uint16_t tTicks = 0x6666;
 uint8_t conditioningLeft = 10; // NOx needs 10 s of conditioning after power-up
 int32_t vocIndex = 0;
 int32_t noxIndex = 0;
+// Raw SGP41 signals (ticks), sent for debugging: shows whether the sensor itself reacts even when
+// the Gas Index stays flat. The app ignores these fields.
+uint16_t lastSrawVoc = 0;
+uint16_t lastSrawNox = 0;
 
 int currentRadarState = 0;
 int movDist = 0;
@@ -91,6 +95,8 @@ void loop() {
         } else if (conditioningLeft) {
             conditioningLeft--;
         } else {
+            lastSrawVoc = srawVoc;
+            lastSrawNox = srawNox;
             vocIndex = vocAlgorithm.process(srawVoc);
             noxIndex = noxAlgorithm.process(srawNox);
         }
@@ -124,6 +130,10 @@ void loop() {
         Serial.print(vocIndex);
         Serial.print(",\"nox\":");
         Serial.print(noxIndex);
+        Serial.print(",\"sraw_voc\":");
+        Serial.print(lastSrawVoc);
+        Serial.print(",\"sraw_nox\":");
+        Serial.print(lastSrawNox);
         Serial.print(",\"radar\":{\"state\":");
         Serial.print(currentRadarState);
         Serial.print(",\"mov_d\":");

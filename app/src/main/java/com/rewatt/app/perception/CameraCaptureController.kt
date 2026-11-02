@@ -93,6 +93,10 @@ class CameraCaptureController(
     private var liveAnalysis: ImageAnalysis? = null
     private var recording: Recording? = null
 
+    /** Back camera normally; TEMP: the LIVE chip can switch it to the front camera ([switchLens]). */
+    @Volatile
+    private var lensSelector: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
     /** True while the live face check streams frames (ImageCapture stays unbound). */
     @Volatile
     private var liveSessionActive = false
@@ -152,7 +156,37 @@ class CameraCaptureController(
                 }
             }
             scope.launch { hub.zoomRatio.collect { withContext(Dispatchers.Main.immediate) { applyZoom() } } }
+            scope.launch { hub.frontCamera.collect { front -> cameraMutex.withLock { switchLens(front) } } }
         }
+    }
+
+    /**
+     * TEMP (testing): rebind everything that is bound now to the front or back camera. A running clip
+     * is stopped; if the front camera can't take all use cases, only the preview + live check move.
+     */
+    private suspend fun switchLens(front: Boolean) = withContext(Dispatchers.Main.immediate) {
+        val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+        if (selector == lensSelector) return@withContext
+        lensSelector = selector
+        val owner = lifecycleOwner ?: return@withContext
+        val provider = cameraProvider ?: return@withContext
+        recording?.stop()
+        recording = null
+        val all = listOfNotNull(preview, activeImageCapture, videoCapture, liveAnalysis)
+        if (all.isEmpty()) return@withContext
+        provider.unbindAll()
+        val bound = runCatching { camera = provider.bindToLifecycle(owner, selector, *all.toTypedArray()) }
+            .onFailure { Log.w(TAG, "Not every use case fits on the ${if (front) "front" else "back"} camera", it) }
+            .isSuccess
+        if (!bound) {
+            activeImageCapture = null
+            videoCapture = null
+            val core = listOfNotNull(preview, liveAnalysis)
+            runCatching { if (core.isNotEmpty()) camera = provider.bindToLifecycle(owner, selector, *core.toTypedArray()) }
+                .onFailure { Log.w(TAG, "Camera switch failed", it) }
+        }
+        applyTorch()
+        applyZoom()
     }
 
     /** Apply the pinch zoom to the bound camera and publish its zoom limits; call after every bind. */
@@ -183,7 +217,7 @@ class CameraCaptureController(
             val p = preview ?: buildPreview().also { preview = it }
             p.setSurfaceProvider(surface)
             if (!provider.isBound(p)) {
-                camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, p)
+                camera = provider.bindToLifecycle(owner, lensSelector, p)
             }
             applyTorch()
             applyZoom()
@@ -318,7 +352,7 @@ class CameraCaptureController(
                         if (liveSessionActive && !closed) onFrame(frame) else frame.bitmap.recycle()
                     }
                     if (!provider.isBound(analysis)) {
-                        camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, analysis)
+                        camera = provider.bindToLifecycle(owner, lensSelector, analysis)
                     }
                     applyTorch()
                     applyZoom()
@@ -475,11 +509,11 @@ class CameraCaptureController(
             provider.unbindAll()
             camera = provider.bindToLifecycle(
                 owner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
+                lensSelector,
                 *listOfNotNull(preview, newImage, newVideo).toTypedArray(),
             )
         } else if (newVideo != null) {
-            camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, newVideo)
+            camera = provider.bindToLifecycle(owner, lensSelector, newVideo)
         }
         activeImageCapture = newImage
         videoCapture = newVideo ?: video
@@ -499,7 +533,7 @@ class CameraCaptureController(
         for (quality in LIVE_VIDEO_QUALITIES) {
             val candidate = buildVideoCapture(QualitySelector.from(quality, FallbackStrategy.lowerQualityThan(quality)))
             val bound = runCatching {
-                camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, candidate)
+                camera = provider.bindToLifecycle(owner, lensSelector, candidate)
             }.onFailure { Log.w(TAG, "Live video at $quality could not bind beside the live check", it) }.isSuccess
             if (bound) {
                 videoCapture = candidate

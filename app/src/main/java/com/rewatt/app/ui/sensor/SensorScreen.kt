@@ -140,6 +140,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rewatt.app.ReWattApplication
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -1436,6 +1438,9 @@ private fun SharedCameraBox(
     val frame = perception.latestFrame
     val showPhoto = energyTab && frame != null && energy.photoPinned && !energy.capturing
     val liveShown = cameraOn && !showPhoto
+    // TEMP (testing): tapping the LIVE chip flips between the back and front camera.
+    val previewHub = (LocalContext.current.applicationContext as ReWattApplication).appGraph.livePreviewHub
+    val frontCamera by previewHub.frontCamera.collectAsStateWithLifecycle()
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
@@ -1488,6 +1493,7 @@ private fun SharedCameraBox(
                 frameWidth = securityState.liveFrameWidth,
                 frameHeight = securityState.liveFrameHeight,
                 modifier = Modifier.fillMaxSize(),
+                mirrored = frontCamera,
             )
         }
 
@@ -1506,7 +1512,18 @@ private fun SharedCameraBox(
             cameraOn -> "LIVE" to Color(0xFFEF4444)
             else -> null
         }
-        chip?.let { (text, dot) -> CameraChip(text, dot, Modifier.align(Alignment.TopStart)) }
+        chip?.let { (text, dot) ->
+            if (liveShown) {
+                CameraChip(
+                    if (frontCamera) "$text · FRONT" else text,
+                    dot,
+                    Modifier.align(Alignment.TopStart),
+                    onClick = previewHub::toggleCamera,
+                )
+            } else {
+                CameraChip(text, dot, Modifier.align(Alignment.TopStart))
+            }
+        }
 
         if (liveShown) {
             // Lifted above the module reminder while that is showing.
@@ -1579,11 +1596,12 @@ private fun ModuleMissingReminder() {
 
 /** Small dark pill with a coloured dot on a camera box ("● LIVE", "● Room1", "● ARMED"). */
 @Composable
-private fun CameraChip(text: String, dot: Color, modifier: Modifier = Modifier) {
+private fun CameraChip(text: String, dot: Color, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     Row(
         modifier = modifier
             .padding(10.dp)
             .clip(RoundedCornerShape(50))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .background(Color(0x99000000))
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,

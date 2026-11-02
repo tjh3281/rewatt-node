@@ -34,6 +34,8 @@ fun LiveFaceOverlay(
     frameWidth: Int,
     frameHeight: Int,
     modifier: Modifier = Modifier,
+    /** Front camera: the preview is shown mirrored but the analysed frame is not, so flip the boxes. */
+    mirrored: Boolean = false,
 ) {
     if (faces.isEmpty() || frameWidth <= 0 || frameHeight <= 0) return
     val measurer = rememberTextMeasurer()
@@ -57,7 +59,8 @@ fun LiveFaceOverlay(
                 TrackStatus.PENDING -> CheckingAmber to checking
                 TrackStatus.UNKNOWN -> UnknownRed to unknown
             }
-            val topLeft = Offset(offsetX + face.left * drawW, offsetY + face.top * drawH)
+            val left = if (mirrored) 1f - face.right else face.left
+            val topLeft = Offset(offsetX + left * drawW, offsetY + face.top * drawH)
             val boxSize = Size((face.right - face.left) * drawW, (face.bottom - face.top) * drawH)
             drawRoundRect(color = color, topLeft = topLeft, size = boxSize, cornerRadius = CornerRadius(6.dp.toPx()), style = Stroke(width = stroke))
 

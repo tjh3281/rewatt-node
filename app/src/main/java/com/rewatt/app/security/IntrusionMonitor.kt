@@ -39,6 +39,11 @@ import org.json.JSONObject
  *   IDLE ──2 moving radar samples──▶ MOTION ──no presence──▶ GRACE(5 s) ──5 s quiet──▶ IDLE
  *                                      ▲───────── presence again ─────┘
  *
+ * Without the reWatt module (no radar sample for 10 s) the camera stands in for the radar: while idle
+ * the live stream is face-checked every 0.3 s (a face twice in a row starts the event) with a YOLO person
+ * check in the background, and during the event a face, or a YOLO person when no face is in view, counts
+ * as presence.
+ *
  * During an event the camera streams live ~1280×960 frames ([CameraCaptureController.beginLiveSecurity]).
  * Every frame goes through SCRFD; [FaceTracker] follows each face and asks for InsightFace recognition
  * only for new or undecided faces:
@@ -90,6 +95,21 @@ class IntrusionMonitor(
     /** The running live stream of the current event; frames from an older session are dropped. */
     @Volatile private var live: LiveSession? = null
 
+    /**
+     * No reWatt module (no radar sample for [MODULE_ABSENT_MS]): the camera itself watches while idle
+     * ([CameraWatch], YOLO person check) and decides presence during an event.
+     */
+    @Volatile private var cameraOnly = false
+    @Volatile private var watch: CameraWatch? = null
+    private var watchRetryAt = 0L
+
+    private class CameraWatch {
+        var lastCheckAt = 0L
+        var faceHits = 0
+        var lastYoloAt = 0L
+        val yoloRunning = AtomicBoolean(false)
+    }
+
     private class LiveSession(val eventId: String, val controller: CameraCaptureController) {
         val tracker = FaceTracker()
         val startedAt = SystemClock.elapsedRealtime()
@@ -98,6 +118,9 @@ class IntrusionMonitor(
         var lastFaceAt = startedAt
         var lastPersonCheckAt = startedAt
         var lastPhotoAt = 0L
+        /** Camera-only mode: last time a face or a YOLO person was seen (stands in for radar presence). */
+        @Volatile var lastPresenceAt = startedAt
+        var lastPresenceCheckAt = startedAt
         val photoIndex = AtomicInteger(0)
         val strangerHandled = AtomicBoolean(false)
         val personCheckRunning = AtomicBoolean(false)
@@ -128,6 +151,7 @@ class IntrusionMonitor(
         pollJob?.cancelAndJoin()
         pollJob = null
         withContext(eventDispatcher) {
+            stopCameraWatch()
             if (eventId != null) endEvent()
             if (alarm.alarmActive) {
                 alarm.dismiss()
@@ -146,6 +170,7 @@ class IntrusionMonitor(
     /** Immediate, non-suspending teardown for service destruction (the camera is closed by the service). */
     fun abort() {
         live = null
+        watch = null
         pollJob?.cancel()
         eventJob?.cancel()
         clipJob?.cancel()
@@ -182,10 +207,23 @@ class IntrusionMonitor(
             val newSample = fresh && telemetry!!.capturedAtMillis != lastSampleAt
             if (newSample) lastSampleAt = telemetry!!.capturedAtMillis
             val moving = fresh && telemetry!!.isMovingTarget()
-            val present = fresh && telemetry!!.toOccupancyDecision().occupied
+            val moduleAbsent = telemetry == null || now - telemetry.capturedAtMillis > MODULE_ABSENT_MS
+            if (moduleAbsent != cameraOnly) {
+                cameraOnly = moduleAbsent
+                consecutiveMoving = 0
+                Log.i(TAG, if (moduleAbsent) "No reWatt module: the camera watches for people" else "reWatt module back: radar wakes the camera")
+            }
+            val present = if (cameraOnly) {
+                live?.let { SystemClock.elapsedRealtime() - it.lastPresenceAt <= CAMERA_PRESENCE_HOLD_MS } ?: false
+            } else {
+                fresh && telemetry!!.toOccupancyDecision().occupied
+            }
 
             when (phase) {
-                EventPhase.IDLE -> if (newSample) {
+                EventPhase.IDLE -> if (cameraOnly) {
+                    if (watch == null && !alarm.alarmActive && now >= watchRetryAt) startCameraWatch()
+                } else if (newSample) {
+                    if (watch != null) stopCameraWatch()
                     consecutiveMoving = if (moving) consecutiveMoving + 1 else 0
                     if (consecutiveMoving >= START_SAMPLES) {
                         consecutiveMoving = 0
@@ -211,7 +249,80 @@ class IntrusionMonitor(
         }
     }
 
+    // ── Camera watch (no module) ─────────────────────────────────────────────────────────────
+
+    /** Stream live frames while idle and YOLO-check one every [WATCH_INTERVAL_MS]; must run on [eventDispatcher]. */
+    private suspend fun startCameraWatch() {
+        val controller = controllerProvider() ?: return
+        val w = CameraWatch()
+        watch = w
+        if (!controller.beginLiveSecurity { frame -> onWatchFrame(w, frame) }) {
+            watch = null
+            watchRetryAt = System.currentTimeMillis() + WATCH_RETRY_MS
+            Log.w(TAG, "Camera watch could not start")
+            return
+        }
+        Log.i(TAG, "Camera watch started")
+    }
+
+    private suspend fun stopCameraWatch() {
+        if (watch == null) return
+        watch = null
+        controllerProvider()?.endLiveSecurity(keepImageBound = perceptionActive())
+        Log.i(TAG, "Camera watch stopped")
+    }
+
+    /**
+     * Live-analysis thread; owns [frame]'s bitmap. A face (SCRFD, fast) in [START_SAMPLES] checks in a row
+     * starts an event; a YOLO person check runs in the background every [WATCH_YOLO_MS] for someone whose
+     * face isn't visible (one hit starts an event).
+     */
+    private fun onWatchFrame(w: CameraWatch, frame: LiveFrame) {
+        val bitmap = frame.bitmap
+        var bitmapHandedOff = false
+        try {
+            val now = SystemClock.elapsedRealtime()
+            if (watch !== w || now - w.lastCheckAt < WATCH_INTERVAL_MS) return
+            w.lastCheckAt = now
+            val faces = runCatching { recognizer.detect(bitmap) }
+                .onFailure { Log.e(TAG, "Watch face check failed", it) }
+                .getOrDefault(emptyList())
+            w.faceHits = if (faces.isNotEmpty()) w.faceHits + 1 else 0
+            if (w.faceHits >= START_SAMPLES) {
+                w.faceHits = 0
+                Log.i(TAG, "Camera watch: face in view")
+                startEventFromWatch(w)
+                return
+            }
+            // Unlike the in-event check, an unloaded YOLO counts as "nobody" here, so no false events.
+            if (faces.isEmpty() && yoloProvider() != null && now - w.lastYoloAt >= WATCH_YOLO_MS &&
+                w.yoloRunning.compareAndSet(false, true)
+            ) {
+                w.lastYoloAt = now
+                bitmapHandedOff = true
+                scope.launch(Dispatchers.Default) {
+                    try {
+                        if (watch === w && personInFrame(bitmap)) startEventFromWatch(w)
+                    } finally {
+                        bitmap.recycle()
+                        w.yoloRunning.set(false)
+                    }
+                }
+            }
+        } finally {
+            if (!bitmapHandedOff) bitmap.recycle()
+        }
+    }
+
+    private fun startEventFromWatch(w: CameraWatch) {
+        scope.launch(eventDispatcher) {
+            if (watch === w && phase == EventPhase.IDLE) startEvent(System.currentTimeMillis())
+        }
+    }
+
     private fun startEvent(now: Long) {
+        // The camera watch hands its live stream straight to the event (same analysis, new analyser).
+        watch = null
         val id = newEventId(now)
         eventId = id
         phase = EventPhase.MOTION
@@ -308,6 +419,7 @@ class IntrusionMonitor(
 
             if (step.faces.isNotEmpty()) {
                 session.lastFaceAt = now
+                session.lastPresenceAt = now
                 if (!session.faceSeen) {
                     session.faceSeen = true
                     saveEvidencePhoto(session, bitmap, step.faces, now)
@@ -324,18 +436,25 @@ class IntrusionMonitor(
                 if (now - session.lastPhotoAt >= PHOTO_INTERVAL_MS) saveEvidencePhoto(session, bitmap, step.faces, now)
             }
 
-            // Radar says someone is here but no face has shown for a while: is it a person at all?
-            if (verdict == EventResult.NO_PERSON &&
+            // Radar (or the camera) says someone is here but no face has shown for a while: is it a person at all?
+            val personCheck = verdict == EventResult.NO_PERSON &&
                 step.faces.isEmpty() &&
                 now - session.lastFaceAt >= NO_FACE_PERSON_CHECK_MS &&
-                now - session.lastPersonCheckAt >= NO_FACE_PERSON_CHECK_MS &&
-                session.personCheckRunning.compareAndSet(false, true)
-            ) {
-                session.lastPersonCheckAt = now
+                now - session.lastPersonCheckAt >= NO_FACE_PERSON_CHECK_MS
+            // No module: with no face in view, YOLO decides whether someone is still there.
+            val presenceCheck = cameraOnly &&
+                step.faces.isEmpty() &&
+                now - session.lastPresenceCheckAt >= CAMERA_PRESENCE_CHECK_MS
+            if ((personCheck || presenceCheck) && session.personCheckRunning.compareAndSet(false, true)) {
+                if (personCheck) session.lastPersonCheckAt = now
+                session.lastPresenceCheckAt = now
                 bitmapHandedOff = true
                 scope.launch(Dispatchers.Default) {
                     try {
-                        if (live === session && personInFrame(bitmap)) {
+                        val person = live === session && personInFrame(bitmap)
+                        // Seen when the frame was taken, not when the (slow) check finished.
+                        if (person) session.lastPresenceAt = maxOf(session.lastPresenceAt, now)
+                        if (person && personCheck) {
                             withContext(eventDispatcher) { onPersonWithoutFace(session, bitmap) }
                         }
                     } finally {
@@ -584,6 +703,25 @@ class IntrusionMonitor(
         private const val TAG = "IntrusionMonitor"
         private const val POLL_MS = 100L
         private const val STALE_SAMPLE_MS = 1_500L
+
+        /** No radar sample for this long → no reWatt module: the camera watches by itself. */
+        private const val MODULE_ABSENT_MS = 10_000L
+
+        /** Camera watch: face check this often while idle ([START_SAMPLES] hits in a row start an event). */
+        private const val WATCH_INTERVAL_MS = 300L
+
+        /** Camera watch: background YOLO person check (no face in view) at most this often. */
+        private const val WATCH_YOLO_MS = 2_000L
+        private const val WATCH_RETRY_MS = 5_000L
+
+        /** Camera-only event: YOLO presence check this often while no face is in view. */
+        private const val CAMERA_PRESENCE_CHECK_MS = 2_000L
+
+        /**
+         * Camera-only event: nobody seen for this long counts as "no presence" (then the 5 s grace). Long
+         * enough to cover one slow YOLO check (the 1920 px model takes ~7 s on the test phone).
+         */
+        private const val CAMERA_PRESENCE_HOLD_MS = 10_000L
         private const val START_SAMPLES = 2
         const val GRACE_MS = 5_000L
         private const val TORCH_RETRY_MS = 300L

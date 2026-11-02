@@ -38,6 +38,14 @@ class LivePreviewHub {
         mutableZoom.value = (mutableZoom.value * factor).coerceIn(zoomRange.start, zoomRange.endInclusive)
     }
 
+    // TEMP (testing): tap the LIVE chip to use the front camera instead of the back one.
+    private val mutableFrontCamera = MutableStateFlow(false)
+    val frontCamera: StateFlow<Boolean> = mutableFrontCamera.asStateFlow()
+
+    fun toggleCamera() {
+        mutableFrontCamera.value = !mutableFrontCamera.value
+    }
+
     fun setZoomRange(min: Float, max: Float) {
         if (max < min) return
         zoomRange = min..max

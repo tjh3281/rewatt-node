@@ -146,6 +146,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rewatt.app.ReWattApplication
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -177,6 +179,7 @@ import kotlinx.coroutines.delay
 import com.rewatt.app.safety.FireAlarmState
 import com.rewatt.app.security.EventPhase
 import com.rewatt.app.security.SecurityUiState
+import com.rewatt.app.ui.security.LiveFaceOverlay
 import com.rewatt.app.telemetry.FireThreshold
 import com.rewatt.app.telemetry.GasLevel
 import com.rewatt.app.telemetry.GasReading
@@ -885,6 +888,7 @@ private fun CameraTabs(
                 roomChip = uiState.roomId.ifBlank { "Room1" }.takeIf { landscape && energyTab },
                 moduleOnline = usbConnected,
                 armed = security.armed && !energyTab,
+                securityState = securityState,
                 zoomRatio = previewZoom,
                 onZoom = onPreviewZoom,
                 modifier = modifier,
@@ -1505,15 +1509,21 @@ private fun SharedCameraBox(
     roomChip: String?,
     moduleOnline: Boolean,
     armed: Boolean,
+    securityState: SecurityUiState,
     zoomRatio: Float,
     onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val cameraOn = perception.isRunning
+    // While armed the camera service is up, so SECURITY shows the live view even without occupancy capture.
+    val cameraOn = perception.isRunning || (!energyTab && securityState.armed)
+    val liveCheck = !energyTab && securityState.liveActive
     val frame = perception.latestFrame
     val showPhoto = energyTab && frame != null && energy.photoPinned && !energy.capturing
     val liveShown = cameraOn && !showPhoto
     val liveCount = perception.liveCount(nowMillis).takeIf { liveShown }
+    // TEMP (testing): tapping the LIVE chip flips between the back and front camera.
+    val previewHub = (LocalContext.current.applicationContext as ReWattApplication).appGraph.livePreviewHub
+    val frontCamera by previewHub.frontCamera.collectAsStateWithLifecycle()
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
@@ -1565,8 +1575,23 @@ private fun SharedCameraBox(
             )
         }
 
+        if (liveCheck) {
+            LiveFaceOverlay(
+                faces = securityState.liveFaces,
+                frameWidth = securityState.liveFrameWidth,
+                frameHeight = securityState.liveFrameHeight,
+                modifier = Modifier.fillMaxSize(),
+                mirrored = frontCamera,
+            )
+        }
+
         // Status chip (top-left)
         val chip: Pair<String, Color>? = when {
+            liveCheck -> stringResource(
+                R.string.live_chip,
+                securityState.liveFps ?: 0f,
+                securityState.liveFaces.size,
+            ) to Color(0xFFEF4444)
             energyTab && energy.capturing -> "Capturing photo…" to Color(0xFFF59E0B)
             showPhoto -> {
                 val n = perception.personCount
@@ -1576,7 +1601,18 @@ private fun SharedCameraBox(
             cameraOn -> "LIVE" to Color(0xFFEF4444)
             else -> null
         }
-        chip?.let { (text, dot) -> CameraChip(text, dot, Modifier.align(Alignment.TopStart)) }
+        chip?.let { (text, dot) ->
+            if (liveShown) {
+                CameraChip(
+                    if (frontCamera) "$text · FRONT" else text,
+                    dot,
+                    Modifier.align(Alignment.TopStart),
+                    onClick = previewHub::toggleCamera,
+                )
+            } else {
+                CameraChip(text, dot, Modifier.align(Alignment.TopStart))
+            }
+        }
 
         if (liveShown) {
             // Lifted above the module reminder while that is showing.
@@ -1666,11 +1702,12 @@ private fun LivePeopleBoxes(people: List<ObjectDetection>, modifier: Modifier = 
 
 /** Small dark pill with a coloured dot on a camera box ("● LIVE", "● Room1", "● ARMED"). */
 @Composable
-private fun CameraChip(text: String, dot: Color, modifier: Modifier = Modifier) {
+private fun CameraChip(text: String, dot: Color, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     Row(
         modifier = modifier
             .padding(10.dp)
             .clip(RoundedCornerShape(50))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .background(Color(0x99000000))
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,

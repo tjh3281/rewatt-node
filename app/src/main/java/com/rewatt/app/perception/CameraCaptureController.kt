@@ -6,18 +6,21 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.util.Log
 import android.util.Range
+import android.util.Size
 import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
 import androidx.camera.video.FallbackStrategy
@@ -29,8 +32,9 @@ import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
-import androidx.exifinterface.media.ExifInterface
+import androidx.core.graphics.get
 import androidx.lifecycle.LifecycleOwner
+import com.rewatt.app.security.LiveFrame
 import com.rewatt.app.security.SecurityFrame
 import java.io.Closeable
 import java.io.File
@@ -60,6 +64,9 @@ import kotlinx.coroutines.withContext
  *    allowed to settle before this photo so the EV reading is never lit by the torch.
  * 2. **Security** ([captureForSecurity], [startRecording], [setTorch]) — CCTV photos and video. These
  *    frames go only to the caller and never touch occupancy state.
+ * 3. **Live security** ([beginLiveSecurity]) — a continuous ~1280×960 ImageAnalysis stream for the live
+ *    face check. While it runs, ImageCapture is unbound (Preview + ImageAnalysis + VideoCapture is the
+ *    most many phones can bind at once), so occupancy photos due in that time are skipped.
  *
  * Camera operations are serialised by [cameraMutex] so neither purpose drops the other's request.
  */
@@ -73,6 +80,8 @@ class CameraCaptureController(
     private val liveView: LivePreviewHub? = null,
 ) : Closeable {
     private val analysisExecutor: ExecutorService = Executors.newFixedThreadPool(2)
+    /** Live face-check frames: one thread, so the analyzer itself paces the stream (latest frame only). */
+    private val liveExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val cameraMutex = Mutex()
     private var lifecycleOwner: LifecycleOwner? = null
@@ -81,7 +90,16 @@ class CameraCaptureController(
     private var activeImageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var preview: Preview? = null
+    private var liveAnalysis: ImageAnalysis? = null
     private var recording: Recording? = null
+
+    /** Back camera normally; TEMP: the LIVE chip can switch it to the front camera ([switchLens]). */
+    @Volatile
+    private var lensSelector: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+    /** True while the live face check streams frames (ImageCapture stays unbound). */
+    @Volatile
+    private var liveSessionActive = false
 
     @Volatile
     private var closed = false
@@ -118,6 +136,8 @@ class CameraCaptureController(
                 in 225 until 315 -> Surface.ROTATION_90
                 else -> Surface.ROTATION_0
             }
+            // Keep live frames upright so faces reach the detector the right way up.
+            liveAnalysis?.targetRotation = deviceRotation
         }
     }
 
@@ -136,7 +156,37 @@ class CameraCaptureController(
                 }
             }
             scope.launch { hub.zoomRatio.collect { withContext(Dispatchers.Main.immediate) { applyZoom() } } }
+            scope.launch { hub.frontCamera.collect { front -> cameraMutex.withLock { switchLens(front) } } }
         }
+    }
+
+    /**
+     * TEMP (testing): rebind everything that is bound now to the front or back camera. A running clip
+     * is stopped; if the front camera can't take all use cases, only the preview + live check move.
+     */
+    private suspend fun switchLens(front: Boolean) = withContext(Dispatchers.Main.immediate) {
+        val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+        if (selector == lensSelector) return@withContext
+        lensSelector = selector
+        val owner = lifecycleOwner ?: return@withContext
+        val provider = cameraProvider ?: return@withContext
+        recording?.stop()
+        recording = null
+        val all = listOfNotNull(preview, activeImageCapture, videoCapture, liveAnalysis)
+        if (all.isEmpty()) return@withContext
+        provider.unbindAll()
+        val bound = runCatching { camera = provider.bindToLifecycle(owner, selector, *all.toTypedArray()) }
+            .onFailure { Log.w(TAG, "Not every use case fits on the ${if (front) "front" else "back"} camera", it) }
+            .isSuccess
+        if (!bound) {
+            activeImageCapture = null
+            videoCapture = null
+            val core = listOfNotNull(preview, liveAnalysis)
+            runCatching { if (core.isNotEmpty()) camera = provider.bindToLifecycle(owner, selector, *core.toTypedArray()) }
+                .onFailure { Log.w(TAG, "Camera switch failed", it) }
+        }
+        applyTorch()
+        applyZoom()
     }
 
     /** Apply the pinch zoom to the bound camera and publish its zoom limits; call after every bind. */
@@ -159,7 +209,7 @@ class CameraCaptureController(
                 p.setSurfaceProvider(null)
             }
             preview = null
-            if (activeImageCapture == null && videoCapture == null) camera = null
+            if (activeImageCapture == null && videoCapture == null && liveAnalysis == null) camera = null
             return@withContext
         }
         runCatching {
@@ -167,7 +217,7 @@ class CameraCaptureController(
             val p = preview ?: buildPreview().also { preview = it }
             p.setSurfaceProvider(surface)
             if (!provider.isBound(p)) {
-                camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, p)
+                camera = provider.bindToLifecycle(owner, lensSelector, p)
             }
             applyTorch()
             applyZoom()
@@ -191,6 +241,10 @@ class CameraCaptureController(
     fun capture() {
         if (closed || captureInFlight || paused) return
         if (lifecycleOwner == null) return
+        if (liveSessionActive) {
+            Log.i(TAG, "Occupancy capture skipped: the live security check holds the camera")
+            return
+        }
         captureInFlight = true
 
         scope.launch {
@@ -250,7 +304,7 @@ class CameraCaptureController(
 
     /** One CCTV still: decoded at ~[SECURITY_MAX_SIDE] px, rotated, with its EXIF EV. Never used for occupancy. */
     suspend fun captureForSecurity(): SecurityFrame? {
-        if (closed || paused) return null
+        if (closed || paused || liveSessionActive) return null
         val file = runCatching {
             cameraMutex.withLock {
                 takePictureToFile(ensureBound(wantVideo = recording != null), "rewatt-cctv-")
@@ -271,13 +325,79 @@ class CameraCaptureController(
         }
     }
 
+    /**
+     * Start the live security stream: unbinds ImageCapture and binds a ~1280×960 ImageAnalysis next to
+     * the live Preview. Each upright frame goes to [onFrame] on a single analysis thread, which owns
+     * (and must recycle) the bitmap; frames that arrive while it is still busy are dropped, so the
+     * analysis speed sets the frame rate. Also allows the torch, like [beginSecuritySession].
+     */
+    suspend fun beginLiveSecurity(onFrame: (LiveFrame) -> Unit): Boolean {
+        if (closed || paused) return false
+        securitySessionActive = true
+        liveSessionActive = true
+        val bound = runCatching {
+            cameraMutex.withLock {
+                withContext(Dispatchers.Main.immediate) {
+                    val owner = lifecycleOwner ?: error("Camera controller is not attached")
+                    val provider = cameraProvider ?: ProcessCameraProvider.awaitInstance(context).also { cameraProvider = it }
+                    activeImageCapture?.let { runCatching { provider.unbind(it) } }
+                    activeImageCapture = null
+                    val analysis = liveAnalysis ?: buildLiveAnalysis().also { liveAnalysis = it }
+                    analysis.setAnalyzer(liveExecutor) { image ->
+                        val frame = runCatching { image.toLiveFrame() }
+                            .onFailure { Log.w(TAG, "Live frame conversion failed", it) }
+                            .getOrNull()
+                        image.close()
+                        if (frame == null) return@setAnalyzer
+                        if (liveSessionActive && !closed) onFrame(frame) else frame.bitmap.recycle()
+                    }
+                    if (!provider.isBound(analysis)) {
+                        camera = provider.bindToLifecycle(owner, lensSelector, analysis)
+                    }
+                    applyTorch()
+                    applyZoom()
+                }
+            }
+        }.onFailure { if (it is CancellationException) throw it; Log.w(TAG, "Live security stream could not bind", it) }
+            .isSuccess
+        if (!bound) {
+            liveSessionActive = false
+            securitySessionActive = false
+        }
+        return bound
+    }
+
+    /** Stop delivering live frames but keep the camera (and torch strobe) bound, e.g. while an alarm rings. */
+    fun pauseLiveFrames() {
+        liveAnalysis?.clearAnalyzer()
+    }
+
+    /** End the live stream and the security session; see [endSecuritySession] for [keepImageBound]. */
+    suspend fun endLiveSecurity(keepImageBound: Boolean) {
+        liveSessionActive = false
+        cameraMutex.withLock {
+            withContext(Dispatchers.Main.immediate) {
+                liveAnalysis?.let { analysis ->
+                    analysis.clearAnalyzer()
+                    cameraProvider?.let { runCatching { it.unbind(analysis) } }
+                }
+                liveAnalysis = null
+            }
+        }
+        endSecuritySession(keepImageBound)
+    }
+
     /** Bind video (FHD, fixed 30 fps) if needed and start recording into [file]. */
     @SuppressLint("MissingPermission")
     suspend fun startRecording(file: File, withAudio: Boolean): Boolean {
         if (closed || !securitySessionActive) return false
         return runCatching {
             cameraMutex.withLock {
-                ensureBound(wantVideo = true)
+                if (liveSessionActive) {
+                    check(ensureLiveVideo()) { "No video stream fits beside the live check" }
+                } else {
+                    ensureBound(wantVideo = true)
+                }
                 withContext(Dispatchers.Main.immediate) {
                     recording?.stop()
                     val audioAllowed = withAudio && ContextCompat.checkSelfPermission(
@@ -338,8 +458,9 @@ class CameraCaptureController(
                 if (!keepImageBound) {
                     activeImageCapture?.let { runCatching { provider.unbind(it) } }
                     activeImageCapture = null
-                    if (preview == null) camera = null // the live view keeps the camera open
                 }
+                // The live view (or a warm ImageCapture) keeps the camera open.
+                if (preview == null && activeImageCapture == null && liveAnalysis == null) camera = null
             }
         }
     }
@@ -352,11 +473,14 @@ class CameraCaptureController(
                 recording?.stop()
                 recording = null
                 val provider = cameraProvider ?: return@withContext
-                listOfNotNull(activeImageCapture, videoCapture, preview).forEach { runCatching { provider.unbind(it) } }
+                liveAnalysis?.clearAnalyzer()
+                listOfNotNull(activeImageCapture, videoCapture, preview, liveAnalysis).forEach { runCatching { provider.unbind(it) } }
                 preview?.setSurfaceProvider(null)
                 preview = null
                 activeImageCapture = null
                 videoCapture = null
+                liveAnalysis = null
+                liveSessionActive = false
                 camera = null
             }
         }
@@ -385,17 +509,40 @@ class CameraCaptureController(
             provider.unbindAll()
             camera = provider.bindToLifecycle(
                 owner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
+                lensSelector,
                 *listOfNotNull(preview, newImage, newVideo).toTypedArray(),
             )
         } else if (newVideo != null) {
-            camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, newVideo)
+            camera = provider.bindToLifecycle(owner, lensSelector, newVideo)
         }
         activeImageCapture = newImage
         videoCapture = newVideo ?: video
         applyTorch()
         applyZoom()
         newImage
+    }
+
+    /**
+     * Bind VideoCapture beside the live Preview + ImageAnalysis; must hold [cameraMutex]. Not every phone
+     * can stream all three at FHD, so lower qualities are tried before giving up (photos only).
+     */
+    private suspend fun ensureLiveVideo(): Boolean = withContext(Dispatchers.Main.immediate) {
+        val owner = lifecycleOwner ?: return@withContext false
+        val provider = cameraProvider ?: return@withContext false
+        if (videoCapture?.let { provider.isBound(it) } == true) return@withContext true
+        for (quality in LIVE_VIDEO_QUALITIES) {
+            val candidate = buildVideoCapture(QualitySelector.from(quality, FallbackStrategy.lowerQualityThan(quality)))
+            val bound = runCatching {
+                camera = provider.bindToLifecycle(owner, lensSelector, candidate)
+            }.onFailure { Log.w(TAG, "Live video at $quality could not bind beside the live check", it) }.isSuccess
+            if (bound) {
+                videoCapture = candidate
+                applyTorch()
+                applyZoom()
+                return@withContext true
+            }
+        }
+        false
     }
 
     private fun applyTorch() {
@@ -443,11 +590,29 @@ class CameraCaptureController(
                 it.targetRotation = deviceRotation
             }
 
-    private fun buildVideoCapture(): VideoCapture<Recorder> {
-        val recorder = Recorder.Builder()
-            .setQualitySelector(
-                QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)),
+    private fun buildLiveAnalysis(): ImageAnalysis =
+        ImageAnalysis.Builder()
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(LIVE_WIDTH, LIVE_HEIGHT),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
+                        ),
+                    )
+                    .build(),
             )
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+            .build()
+            .also { it.targetRotation = deviceRotation }
+
+    private fun buildVideoCapture(
+        qualitySelector: QualitySelector = QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)),
+    ): VideoCapture<Recorder> {
+        val recorder = Recorder.Builder()
+            .setQualitySelector(qualitySelector)
             .build()
         return VideoCapture.Builder(recorder)
             .setTargetFrameRate(Range(VIDEO_FPS, VIDEO_FPS))
@@ -471,11 +636,14 @@ class CameraCaptureController(
                 preview = null
                 activeImageCapture = null
                 videoCapture = null
+                liveAnalysis?.clearAnalyzer()
+                liveAnalysis = null
                 camera = null
             }
         }
         scope.cancel()
         analysisExecutor.shutdownNow()
+        liveExecutor.shutdownNow()
     }
 
     private fun processSavedImageAsync(photoFile: File) {
@@ -552,17 +720,14 @@ class CameraCaptureController(
         private const val PREVIEW_RELEASE_DELAY_MS = 1_500L
         private const val VIDEO_FPS = 30
 
+        /** Live face-check frames (4:3, like the Preview, so overlay boxes line up with the live view). */
+        private const val LIVE_WIDTH = 1280
+        private const val LIVE_HEIGHT = 960
+        private val LIVE_VIDEO_QUALITIES = listOf(Quality.FHD, Quality.HD, Quality.SD)
+
         /** CCTV stills are decoded at about this size: plenty for faces, light on memory. */
         const val SECURITY_MAX_SIDE = 2000
     }
-}
-
-private fun decodeSampled(file: File, maxSide: Int): Bitmap? {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeFile(file.absolutePath, bounds)
-    var sample = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-    return BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
 }
 
 private fun ExposureReading?.toExposureMessage(): String =
@@ -570,24 +735,27 @@ private fun ExposureReading?.toExposureMessage(): String =
         "EV %.1f; lights %s.".format(it.ev, if (it.lightsOn) "on" else "off")
     } ?: "Exposure data unavailable."
 
-private fun Bitmap.rotateFromExif(imagePath: String): Bitmap {
-    val orientation = runCatching {
-        ExifInterface(imagePath).getAttributeInt(
-            ExifInterface.TAG_ORIENTATION,
-            ExifInterface.ORIENTATION_NORMAL,
-        )
-    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
-    val degrees = when (orientation) {
-        ExifInterface.ORIENTATION_ROTATE_90 -> 90
-        ExifInterface.ORIENTATION_ROTATE_180 -> 180
-        ExifInterface.ORIENTATION_ROTATE_270 -> 270
-        else -> 0
+/** Upright RGBA frame for the live face check, with a coarse mean luma (0–255) sampled on a grid. */
+private fun ImageProxy.toLiveFrame(): LiveFrame {
+    val raw = toBitmap()
+    val upright = raw.rotate(imageInfo.rotationDegrees)
+    if (upright !== raw) raw.recycle()
+    var sum = 0L
+    var n = 0
+    val stepX = (upright.width / LUMA_GRID).coerceAtLeast(1)
+    val stepY = (upright.height / LUMA_GRID).coerceAtLeast(1)
+    var y = stepY / 2
+    while (y < upright.height) {
+        var x = stepX / 2
+        while (x < upright.width) {
+            val p = upright[x, y]
+            sum += (((p shr 16) and 0xFF) * 299 + ((p shr 8) and 0xFF) * 587 + (p and 0xFF) * 114) / 1000
+            n++
+            x += stepX
+        }
+        y += stepY
     }
-    return rotate(degrees)
+    return LiveFrame(upright, meanLuma = if (n == 0) 0f else sum.toFloat() / n, capturedAtMillis = System.currentTimeMillis())
 }
 
-private fun Bitmap.rotate(degrees: Int): Bitmap {
-    if (degrees == 0) return this
-    val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
-    return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
-}
+private const val LUMA_GRID = 32

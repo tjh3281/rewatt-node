@@ -24,13 +24,18 @@ class ScrfdFaceDetector(
     private val env: OrtEnvironment,
     modelBytes: ByteArray,
     private val inputSize: Int = DEFAULT_INPUT_SIZE,
+    threads: Int = 2,
 ) : Closeable {
     private val session: OrtSession = env.createSession(
         modelBytes,
-        OrtSession.SessionOptions().apply { setIntraOpNumThreads(2) },
+        OrtSession.SessionOptions().apply { setIntraOpNumThreads(threads) },
     )
     private val inputName: String = session.inputNames.first()
     private var loggedShapes = false
+
+    // Reused between calls (the live check runs ~10×/s; callers serialise detect()).
+    private val data = FloatArray(3 * inputSize * inputSize)
+    private var pixels = IntArray(0)
 
     init {
         require(inputSize % 32 == 0) { "SCRFD input size must be a multiple of 32" }
@@ -41,12 +46,12 @@ class ScrfdFaceDetector(
         val newW = (bitmap.width * scale).roundToInt().coerceIn(1, inputSize)
         val newH = (bitmap.height * scale).roundToInt().coerceIn(1, inputSize)
         val resized = Bitmap.createScaledBitmap(bitmap, newW, newH, true)
-        val pixels = IntArray(newW * newH)
+        if (pixels.size < newW * newH) pixels = IntArray(newW * newH)
         resized.getPixels(pixels, 0, newW, 0, 0, newW, newH)
         if (resized !== bitmap) resized.recycle()
 
         val area = inputSize * inputSize
-        val data = FloatArray(3 * area) { PAD_VALUE }
+        data.fill(PAD_VALUE)
         for (y in 0 until newH) {
             for (x in 0 until newW) {
                 val p = pixels[y * newW + x]

@@ -2,6 +2,7 @@ package com.rewatt.app.ui.security
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
@@ -9,9 +10,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.rewatt.app.R
 import com.rewatt.app.core.AppGraph
+import com.rewatt.app.perception.CameraCaptureController
 import com.rewatt.app.perception.CameraCaptureService
+import com.rewatt.app.perception.decodeSampledUpright
 import com.rewatt.app.security.FaceRecognizer
 import com.rewatt.app.security.FaceSample
+import com.rewatt.app.security.Person
 import com.rewatt.app.security.SecurityEvent
 import com.rewatt.app.security.SecuritySettings
 import com.rewatt.app.security.SecurityUiState
@@ -33,6 +37,7 @@ class SecurityViewModel(
 ) : ViewModel() {
     val state: StateFlow<SecurityUiState> = graph.securityStateHolder.state
     val familyFaces: StateFlow<List<FaceSample>> = graph.familyFaceStore.samples
+    val people: StateFlow<List<Person>> = graph.familyFaceStore.people
     val events: StateFlow<List<SecurityEvent>> = graph.securityEventStore.events
 
     private val mutableThreshold = MutableStateFlow(graph.securitySettings.matchThreshold)
@@ -67,6 +72,12 @@ class SecurityViewModel(
     }
 
     fun deleteFace(id: String) = graph.familyFaceStore.delete(id)
+
+    fun addPerson(name: String): Person = graph.familyFaceStore.addPerson(name)
+
+    fun renamePerson(personId: String, name: String) = graph.familyFaceStore.rename(personId, name)
+
+    fun deletePerson(personId: String) = graph.familyFaceStore.deletePerson(personId)
 
     fun clearFaces() = graph.familyFaceStore.clear()
 
@@ -136,15 +147,29 @@ class SecurityViewModel(
         }
     }
 
-    suspend fun registerFace(bitmap: Bitmap): FaceRecognizer.RegistrationResult? = withContext(Dispatchers.Default) {
+    suspend fun registerFace(personId: String, bitmap: Bitmap): FaceRecognizer.RegistrationResult? = withContext(Dispatchers.Default) {
         runCatching { graph.faceRecognizer.extractForRegistration(bitmap) }
             .getOrNull()
             ?.also { result ->
                 if (result is FaceRecognizer.RegistrationResult.Ok) {
-                    graph.familyFaceStore.add(result.embedding, result.thumbnail)
+                    graph.familyFaceStore.add(personId, result.embedding, result.thumbnail)
+                    result.thumbnail.recycle()
                 }
             }
     }
+
+    /** Gallery photos for [personId]: each must hold exactly one usable face. One result per photo (null = unreadable). */
+    suspend fun registerFromGallery(personId: String, uris: List<Uri>): List<FaceRecognizer.RegistrationResult?> =
+        uris.map { uri ->
+            val bitmap = withContext(Dispatchers.IO) {
+                runCatching { decodeSampledUpright(appContext.contentResolver, uri, CameraCaptureController.SECURITY_MAX_SIDE) }.getOrNull()
+            } ?: return@map null
+            try {
+                registerFace(personId, bitmap)
+            } finally {
+                bitmap.recycle()
+            }
+        }
 
     private fun cameraServiceRunning(): Boolean =
         graph.perceptionStateHolder.state.value.isRunning || graph.securitySettings.armed

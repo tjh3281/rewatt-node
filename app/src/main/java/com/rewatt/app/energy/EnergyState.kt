@@ -30,13 +30,6 @@ data class EnergyBanner(val id: Long, val kind: Kind, val atMillis: Long) {
     enum class Kind { MOTION, NO_MOTION, ROOM_EMPTY }
 }
 
-/** The three round buttons in the occupancy box (true = green / on). */
-data class ApplianceStates(
-    val lights: Boolean = true,
-    val fan: Boolean = true,
-    val aircond: Boolean = true,
-)
-
 /** Kind of occupancy check (see [EnergyStateHolder.requestCheck]; nothing triggers one yet). */
 enum class EnergyCheck {
     /** Person walks in: "Movement detected" banner → photo → YOLO count. */
@@ -74,9 +67,4 @@ class EnergyStateHolder {
     fun requestCheck(check: EnergyCheck) {
         checkRequests.trySend(check)
     }
-
-    private val mutableAppliances = MutableStateFlow(ApplianceStates())
-    val appliances: StateFlow<ApplianceStates> = mutableAppliances.asStateFlow()
-
-    fun updateAppliances(transform: (ApplianceStates) -> ApplianceStates) = mutableAppliances.update(transform)
 }

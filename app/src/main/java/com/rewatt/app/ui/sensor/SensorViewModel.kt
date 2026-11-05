@@ -10,6 +10,8 @@ import com.rewatt.app.data.MqttState
 import com.rewatt.app.data.MqttSyncRepository
 import com.rewatt.app.data.SensorDashboardState
 import com.rewatt.app.data.TelemetryRepository
+import com.rewatt.app.energy.LightsController
+import com.rewatt.app.energy.LightsNotifier
 import com.rewatt.app.perception.PerceptionStateHolder
 import com.rewatt.app.perception.PerceptionUiState
 import com.rewatt.app.telemetry.FireThreshold
@@ -19,6 +21,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -38,6 +44,7 @@ class SensorViewModel(
     private val telemetryRepository: TelemetryRepository,
     val mqttRepository: MqttSyncRepository,
     val perceptionStateHolder: PerceptionStateHolder,
+    private val lightsController: LightsController,
 ) : ViewModel() {
 
     private val nowMillisFlow = MutableStateFlow(System.currentTimeMillis())
@@ -63,12 +70,25 @@ class SensorViewModel(
         initialValue = SensorNodeUiState(),
     )
 
+    private val lightsNotifier = LightsNotifier(appContext)
+
     init {
-        // Ticker loop: update time every second and emit MQTT 1 Hz payload
+        // A notification for every lights on ⇄ off change (skipping the one already there when this starts).
+        viewModelScope.launch {
+            lightsController.state
+                .map { it.lastChange }
+                .distinctUntilChanged()
+                .drop(1)
+                .filterNotNull()
+                .collect { lightsNotifier.notify(it, mqttRepository.roomId.ifBlank { "Room1" }) }
+        }
+        // Ticker loop: update time every second, step the lights (Auto-off / Schedule) and emit MQTT 1 Hz payload
         viewModelScope.launch {
             while (true) {
                 val current = System.currentTimeMillis()
                 nowMillisFlow.value = current
+                val perception = perceptionStateHolder.state.value
+                lightsController.tick(current, perception.liveCount(current), perception.lightsOn)
                 streamMqttTelemetry(current)
                 delay(1000L)
             }
@@ -131,6 +151,10 @@ class SensorViewModel(
             // Live headcount on the preview when it is running; otherwise the last photo's count.
             put("personCount", perception.liveCount(now) ?: perception.personCount)
             put("lightsOn", perception.lightsOn)
+            // The lights as the app shows them (Auto-off / Schedule can switch them off), and Auto-off.
+            val lights = lightsController.state.value
+            put("lightsState", lights.lightsOn)
+            put("lightsAutoOff", lights.autoOff)
             put("temperatureC", latest?.temperatureC ?: 0.0)
             put("humidityPercent", latest?.humidityPercent ?: 0.0)
             put("exposureEv", perception.exposureEv)
@@ -154,9 +178,10 @@ class SensorViewModelFactory(
     private val telemetryRepository: TelemetryRepository,
     private val mqttRepository: MqttSyncRepository,
     private val perceptionStateHolder: PerceptionStateHolder,
+    private val lightsController: LightsController,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return SensorViewModel(appContext, telemetryRepository, mqttRepository, perceptionStateHolder) as T
+        return SensorViewModel(appContext, telemetryRepository, mqttRepository, perceptionStateHolder, lightsController) as T
     }
 }

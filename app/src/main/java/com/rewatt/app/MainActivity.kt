@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity() {
             telemetryRepository = graph.telemetryRepository,
             mqttRepository = graph.mqttSyncRepository,
             perceptionStateHolder = graph.perceptionStateHolder,
+            lightsController = graph.lightsController,
         )
     }
 
@@ -108,7 +109,7 @@ class MainActivity : AppCompatActivity() {
                 val appGraph = (application as ReWattApplication).appGraph
                 val fireAlarm by appGraph.fireMonitor.alarm.state.collectAsStateWithLifecycle()
                 val energyState by appGraph.energyStateHolder.state.collectAsStateWithLifecycle()
-                val applianceStates by appGraph.energyStateHolder.appliances.collectAsStateWithLifecycle()
+                val lightsState by appGraph.lightsController.state.collectAsStateWithLifecycle()
                 val previewZoom by appGraph.livePreviewHub.zoomRatio.collectAsStateWithLifecycle()
                 val onLivePreviewSurface: (Preview.SurfaceProvider, Boolean) -> Unit = { provider, attached ->
                     if (attached) appGraph.livePreviewHub.attach(provider) else appGraph.livePreviewHub.detach(provider)
@@ -134,8 +135,8 @@ class MainActivity : AppCompatActivity() {
                     previewZoom = previewZoom,
                     onPreviewZoom = appGraph.livePreviewHub::zoomBy,
                     onDismissPhoto = { appGraph.energyStateHolder.update { it.copy(photoPinned = false) } },
-                    applianceStates = applianceStates,
-                    onUpdateAppliances = appGraph.energyStateHolder::updateAppliances,
+                    lightsState = lightsState,
+                    lightsController = appGraph.lightsController,
                     securityParts = SecurityTabParts(
                         armed = securityState.armed,
                         side = { compact ->

@@ -94,7 +94,10 @@ class SecurityEventStore(context: Context) {
                 continue
             }
             val tooOld = nowMillis - event.startedAtMillis > MAX_AGE_MILLIS
-            if (tooOld || total + event.sizeBytes > MAX_TOTAL_BYTES) {
+            // Cut off before it ended (app killed or reinstalled) with nothing worth keeping: like at a normal end.
+            val unfinishedEmpty = event.endedAtMillis == null &&
+                (event.result == EventResult.NO_PERSON || event.result == EventResult.FAMILY)
+            if (tooOld || unfinishedEmpty || total + event.sizeBytes > MAX_TOTAL_BYTES) {
                 Log.i(TAG, "Retention: deleting event ${event.id}")
                 eventDir(event.id).deleteRecursively()
             } else {

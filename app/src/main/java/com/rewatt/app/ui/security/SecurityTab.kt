@@ -115,7 +115,7 @@ fun SecuritySidePanel(
     ArmCard(state = state, canArm = canArm, onArmChange = onArmChange, compact = compact)
 }
 
-/** SECURITY tab, below the shared camera box (portrait): CCTV event history + its detail dialog. */
+/** SECURITY tab, next to the shared camera box (below it in portrait, right of it in landscape): CCTV event history + its detail dialog. */
 @Composable
 fun SecurityHistorySection(viewModel: SecurityViewModel) {
     val context = LocalContext.current

@@ -6,11 +6,19 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
+import android.os.SystemClock
 import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.OrientationEventListener
 import android.view.Surface
+import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -58,10 +66,10 @@ import kotlinx.coroutines.withContext
 /**
  * Owns the back camera for two independent purposes that share one CameraX session:
  *
- * 1. **Occupancy** ([capture]) — the 10-minute illuminance + headcount photo. Behaviour is unchanged:
- *    EXIF EV → [onFramePreview], then YOLO → [onFrameAnalyzed]; the ImageCapture stays bound (warm)
- *    afterwards exactly as before. If the CCTV torch is on, it is switched off and the exposure is
- *    allowed to settle before this photo so the EV reading is never lit by the torch.
+ * 1. **Occupancy** ([capture]) — the headcount photo: EXIF EV → [onFramePreview], then YOLO →
+ *    [onFrameAnalyzed]; the ImageCapture stays bound (warm) afterwards. If the CCTV torch is on, it is
+ *    switched off and the exposure is allowed to settle before this photo. Illuminance itself comes from
+ *    the live view instead ([onLiveExposure], every 10 s), with no photo.
  * 2. **Security** ([captureForSecurity], [startRecording], [setTorch]) — CCTV photos and video. These
  *    frames go only to the caller and never touch occupancy state.
  * 3. **Live security** ([beginLiveSecurity]) — a continuous ~1280×960 ImageAnalysis stream for the live
@@ -78,6 +86,8 @@ class CameraCaptureController(
     private val onError: (String) -> Unit,
     /** Live view: a Preview use case is bound while it holds a surface; also the pinch (camera) zoom. */
     private val liveView: LivePreviewHub? = null,
+    /** Live illuminance from the live view's exposure, every [LIVE_EXPOSURE_INTERVAL_MS] while it runs. */
+    private val onLiveExposure: (ExposureReading) -> Unit = {},
 ) : Closeable {
     private val analysisExecutor: ExecutorService = Executors.newFixedThreadPool(2)
     /** Live face-check frames: one thread, so the analyzer itself paces the stream (latest frame only). */
@@ -158,6 +168,12 @@ class CameraCaptureController(
             scope.launch { hub.zoomRatio.collect { withContext(Dispatchers.Main.immediate) { applyZoom() } } }
             scope.launch { hub.frontCamera.collect { front -> cameraMutex.withLock { switchLens(front) } } }
         }
+        scope.launch {
+            while (true) {
+                delay(LIVE_EXPOSURE_POLL_MS)
+                publishLiveExposure()
+            }
+        }
     }
 
     /**
@@ -224,6 +240,7 @@ class CameraCaptureController(
         }.onFailure { Log.w(TAG, "Live preview could not bind", it) }
     }
 
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun buildPreview(): Preview =
         Preview.Builder()
             .setResolutionSelector(
@@ -231,7 +248,46 @@ class CameraCaptureController(
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .build(),
             )
+            .also { Camera2Interop.Extender(it).setSessionCaptureCallback(liveExposureCallback) }
             .build()
+
+    // ── Live illuminance (from the live view's exposure) ─────────────────────────────────────
+
+    /**
+     * Every preview frame the camera reports the ISO and exposure time its auto-exposure chose; that
+     * is the same EV100 the occupancy photo read from EXIF, but without taking a photo.
+     */
+    private val liveExposureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: return
+            val exposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: return
+            // Like the EXIF ISO, include the digital boost applied after the sensor (100 = none).
+            val boost = result.get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST) ?: 100
+            liveIso = iso * boost / 100
+            liveExposureNs = exposureNs
+            liveExposureAt = SystemClock.elapsedRealtime()
+        }
+    }
+
+    @Volatile private var liveIso = 0
+    @Volatile private var liveExposureNs = 0L
+    @Volatile private var liveExposureAt = 0L
+    private var livePublishedAt = 0L
+
+    /** Last time the torch was lit; readings that soon after are skipped (the torch lights the room). */
+    @Volatile private var torchLitAt = 0L
+
+    /** Every [LIVE_EXPOSURE_INTERVAL_MS] while the live view runs: hand the latest reading to [onLiveExposure]. */
+    private fun publishLiveExposure() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - liveExposureAt > LIVE_EXPOSURE_STALE_MS) return // live view not running
+        if (now - livePublishedAt < LIVE_EXPOSURE_INTERVAL_MS) return
+        if (now - torchLitAt < TORCH_SETTLE_MS) return
+        val reading = ExposureValueCalculator.calculate(liveIso, liveExposureNs / 1_000_000_000.0) ?: return
+        livePublishedAt = now
+        Log.i(TAG, "Live illuminance: ${reading.toExposureMessage()} (ISO ${reading.iso}, ${liveExposureNs / 1000} µs)")
+        onLiveExposure(reading)
+    }
 
     // ── Occupancy (illuminance + headcount) ──────────────────────────────────────────────────
 
@@ -524,18 +580,25 @@ class CameraCaptureController(
 
     /**
      * Bind VideoCapture beside the live Preview + ImageAnalysis; must hold [cameraMutex]. Not every phone
-     * can stream all three at FHD, so lower qualities are tried before giving up (photos only).
+     * can stream all three at FHD, so lower qualities are tried before giving up (photos only). Each
+     * quality is asked for exactly (no fallback), so FHD is used whenever the camera can do it.
      */
     private suspend fun ensureLiveVideo(): Boolean = withContext(Dispatchers.Main.immediate) {
         val owner = lifecycleOwner ?: return@withContext false
         val provider = cameraProvider ?: return@withContext false
         if (videoCapture?.let { provider.isBound(it) } == true) return@withContext true
         for (quality in LIVE_VIDEO_QUALITIES) {
-            val candidate = buildVideoCapture(QualitySelector.from(quality, FallbackStrategy.lowerQualityThan(quality)))
+            val candidate = buildVideoCapture(QualitySelector.from(quality))
             val bound = runCatching {
                 camera = provider.bindToLifecycle(owner, lensSelector, candidate)
             }.onFailure { Log.w(TAG, "Live video at $quality could not bind beside the live check", it) }.isSuccess
             if (bound) {
+                Log.i(
+                    TAG,
+                    "Live video bound: ${candidate.resolutionInfo?.resolution} (asked $quality), " +
+                        "live check frames ${liveAnalysis?.resolutionInfo?.resolution}, " +
+                        "${if (lensSelector == CameraSelector.DEFAULT_FRONT_CAMERA) "front" else "back"} camera",
+                )
                 videoCapture = candidate
                 applyTorch()
                 applyZoom()
@@ -547,6 +610,7 @@ class CameraCaptureController(
 
     private fun applyTorch() {
         val on = ((desiredTorch && securitySessionActive) || alarmTorch) && !torchSuppressed
+        if (on) torchLitAt = SystemClock.elapsedRealtime()
         runCatching { camera?.cameraControl?.enableTorch(on) }
     }
 
@@ -715,6 +779,15 @@ class CameraCaptureController(
 
         /** Time for auto-exposure to settle after the torch is switched off for an occupancy photo. */
         private const val TORCH_SETTLE_MS = 800L
+
+        /** Live illuminance: published this often while the live view runs… */
+        private const val LIVE_EXPOSURE_INTERVAL_MS = 10_000L
+
+        /** …checked at this pace (so the first reading comes about 1 s after the live view starts)… */
+        private const val LIVE_EXPOSURE_POLL_MS = 1_000L
+
+        /** …and only from a frame reported this recently (otherwise the live view isn't running). */
+        private const val LIVE_EXPOSURE_STALE_MS = 2_000L
 
         /** How long the live Preview stays bound after its screen goes away (tab switches). */
         private const val PREVIEW_RELEASE_DELAY_MS = 1_500L

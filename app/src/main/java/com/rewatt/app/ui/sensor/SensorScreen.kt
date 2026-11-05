@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
@@ -164,7 +165,8 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.rewatt.app.R
 import com.rewatt.app.data.MqttStatus
-import com.rewatt.app.energy.ApplianceStates
+import com.rewatt.app.energy.LightsController
+import com.rewatt.app.energy.LightsState
 import com.rewatt.app.energy.EnergyBanner
 import com.rewatt.app.energy.EnergyMonitor
 import com.rewatt.app.energy.EnergyPhase
@@ -216,22 +218,19 @@ fun SensorScreen(
     /** Live headcount: called with each frame the camera box is showing (see [LivePreview]). */
     onLiveFrame: (suspend (Bitmap) -> Unit)? = null,
     onDismissPhoto: () -> Unit = {},
-    applianceStates: ApplianceStates = ApplianceStates(),
-    onUpdateAppliances: ((ApplianceStates) -> ApplianceStates) -> Unit = {},
+    /** Room lights + aircond (Room card icons, Schedule / Auto-off, occupancy-card countdown). */
+    lightsState: LightsState = LightsState(),
+    lightsController: LightsController? = null,
     /** Real camera zoom ratio shown on the live previews; pinch calls [onPreviewZoom] with a factor. */
     previewZoom: Float = 1f,
     onPreviewZoom: (Float) -> Unit = {},
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(StitchTab.ENERGY) }
 
-    // ENERGY and SECURITY follow the phone into landscape; the other tabs stay portrait.
+    // Every tab follows the phone into landscape.
     val activity = LocalContext.current.findActivity()
-    LaunchedEffect(selectedTab) {
-        activity?.requestedOrientation = if (selectedTab == StitchTab.ENERGY || selectedTab == StitchTab.SECURITY) {
-            ActivityInfo.SCREEN_ORIENTATION_SENSOR
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
+    LaunchedEffect(Unit) {
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
     }
 
     // Landscape also hides the phone's status bar (swipe down from the top edge to peek at it).
@@ -245,24 +244,11 @@ fun SensorScreen(
         }
     }
 
-    // Occupancy-box appliance buttons (tap switches green ⇄ red).
-    val appliances = listOf(
-        ApplianceToggle(Icons.Filled.Lightbulb, "Lights", applianceStates.lights) {
-            onUpdateAppliances { it.copy(lights = !it.lights) }
-        },
-        ApplianceToggle(FanIcon, "Fan", applianceStates.fan) {
-            onUpdateAppliances { it.copy(fan = !it.fan) }
-        },
-        ApplianceToggle(Icons.Filled.AcUnit, "Aircond", applianceStates.aircond) {
-            onUpdateAppliances { it.copy(aircond = !it.aircond) }
-        },
-    )
-
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color(0xFFF9FAFB),
         topBar = {
-            // Landscape (ENERGY only): no header — the camera gets the height.
+            // Landscape: no header — the content (camera, fire status, settings) gets the height.
             if (!landscape) {
                 StitchHeader(
                     moduleOnline = uiState.sensorState.connectionStatus == UsbConnectionStatus.Connected,
@@ -294,7 +280,8 @@ fun SensorScreen(
                     uiState = uiState,
                     securityState = securityState,
                     energyState = energyState,
-                    appliances = appliances,
+                    lightsState = lightsState,
+                    lightsController = lightsController,
                     security = securityParts,
                     onLivePreviewSurface = onLivePreviewSurface,
                     onLiveFrame = onLiveFrame,
@@ -303,26 +290,30 @@ fun SensorScreen(
                     previewZoom = previewZoom,
                     onPreviewZoom = onPreviewZoom,
                 )
-                StitchTab.FIRE -> StitchFireTab(
-                    uiState = uiState,
-                    fireAlarmState = fireAlarmState,
-                )
-                StitchTab.SETTINGS -> StitchSettingsTab(
-                    uiState = uiState,
-                    onUpdateMqttConfig = onUpdateMqttConfig,
-                    onOpenSetupGuide = onOpenSetupGuide,
-                    securitySettingsContent = settingsSecurityContent,
-                    diagnosticsContent = {
-                        DiagnosticsSection(
-                            uiState = uiState,
-                            onScanUsb = onScanUsb,
-                            onStartPerception = onStartPerception,
-                            onStopPerception = onStopPerception,
-                            onDebugCapture = onDebugCapture,
-                            onSendPhotoMqtt = onSendPhotoMqtt,
-                        )
-                    },
-                )
+                StitchTab.FIRE -> ReadableWidth {
+                    StitchFireTab(
+                        uiState = uiState,
+                        fireAlarmState = fireAlarmState,
+                    )
+                }
+                StitchTab.SETTINGS -> ReadableWidth {
+                    StitchSettingsTab(
+                        uiState = uiState,
+                        onUpdateMqttConfig = onUpdateMqttConfig,
+                        onOpenSetupGuide = onOpenSetupGuide,
+                        securitySettingsContent = settingsSecurityContent,
+                        diagnosticsContent = {
+                            DiagnosticsSection(
+                                uiState = uiState,
+                                onScanUsb = onScanUsb,
+                                onStartPerception = onStartPerception,
+                                onStopPerception = onStopPerception,
+                                onDebugCapture = onDebugCapture,
+                                onSendPhotoMqtt = onSendPhotoMqtt,
+                            )
+                        },
+                    )
+                }
             }
 
             // In-app banners from the ENERGY flow (shown on every tab).
@@ -672,6 +663,23 @@ private fun BreathingTrafficPill(level: GasLevel?, modifier: Modifier = Modifier
 
 private const val GAS_INDEX_MAX = 500f
 
+/**
+ * Keeps a scrolling tab (FIRE, SETTINGS) at a comfortable reading width: full width in portrait,
+ * centred and at most [READABLE_MAX_WIDTH] wide in landscape.
+ */
+@Composable
+private fun ReadableWidth(content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(
+            Modifier
+                .widthIn(max = READABLE_MAX_WIDTH)
+                .fillMaxSize(),
+        ) { content() }
+    }
+}
+
+private val READABLE_MAX_WIDTH = 640.dp
+
 // ── TAB 2: FIRE ───────────────────────────────────────────────────────────────
 
 @Composable
@@ -764,38 +772,6 @@ private fun StitchFireTab(
 
 // ── TAB 1: ENERGY ─────────────────────────────────────────────────────────────
 
-/** Three-blade fan glyph (the icon set only has "fan off"). */
-private val FanIcon: ImageVector by lazy {
-    ImageVector.Builder(name = "Fan", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
-        .apply {
-            listOf(0f, 120f, 240f).forEach { angle ->
-                group(rotate = angle, pivotX = 12f, pivotY = 12f) {
-                    path(fill = SolidColor(Color.Black)) {
-                        moveTo(12f, 12f)
-                        curveTo(9.6f, 9.2f, 9.4f, 4.4f, 12.6f, 3.2f)
-                        curveTo(15.8f, 2.2f, 17.0f, 6.4f, 13.9f, 10.0f)
-                        close()
-                    }
-                }
-            }
-            path(fill = SolidColor(Color.Black)) {
-                moveTo(9.8f, 12f)
-                arcToRelative(2.2f, 2.2f, 0f, true, false, 4.4f, 0f)
-                arcToRelative(2.2f, 2.2f, 0f, true, false, -4.4f, 0f)
-                close()
-            }
-        }
-        .build()
-}
-
-/** One round appliance button in the occupancy box (green = on, red = off; tap to switch). */
-private data class ApplianceToggle(
-    val icon: ImageVector,
-    val name: String,
-    val on: Boolean,
-    val onToggle: () -> Unit,
-)
-
 
 /**
  * Two-finger pinch on a live preview → [onZoom] with the zoom factor of each step. One-finger taps
@@ -837,7 +813,7 @@ data class SecurityTabParts(
     val armed: Boolean = false,
     /** Title + arm card; `compact` = the slim landscape column. */
     val side: @Composable (compact: Boolean) -> Unit = {},
-    /** Event history, below the camera (portrait). */
+    /** Event history: below the camera (portrait), or in a column right of it (landscape). */
     val below: @Composable () -> Unit = {},
 )
 
@@ -846,8 +822,9 @@ data class SecurityTabParts(
  * live camera box is the same composable at the same place, so switching between the two tabs never
  * stops, reloads or moves it.
  *  - Portrait: tab panel on top (kept at the same height for both tabs) → camera → tab content below
- *    (ENERGY: Illuminance; SECURITY: event history).
- *  - Landscape: tab panel in a slim left column (20%) → camera taking 80% of the width.
+ *    (SECURITY: event history; the illuminance card lives in Settings → Diagnostics).
+ *  - Landscape: tab panel in a slim left column (20%) → camera taking 80% of the width (SECURITY:
+ *    camera 50% and the event log in a 30% column on the right).
  */
 @Composable
 private fun CameraTabs(
@@ -855,7 +832,8 @@ private fun CameraTabs(
     uiState: SensorNodeUiState,
     securityState: SecurityUiState,
     energyState: EnergyUiState,
-    appliances: List<ApplianceToggle>,
+    lightsState: LightsState,
+    lightsController: LightsController?,
     security: SecurityTabParts,
     onLivePreviewSurface: (Preview.SurfaceProvider, Boolean) -> Unit,
     onLiveFrame: (suspend (Bitmap) -> Unit)?,
@@ -936,7 +914,10 @@ private fun CameraTabs(
                         OccupancyCard(
                             energy = energyState,
                             nowMillis = uiState.nowMillis,
-                            appliances = appliances,
+                            lights = lightsState,
+                            onToggleLights = { lightsController?.switchLights(lightsState.lightsOn != true) },
+                            onToggleAircond = { lightsController?.toggleAircond() },
+                            onToggleFan = { lightsController?.toggleFan() },
                             liveCount = liveCount,
                             wide = true,
                             modifier = Modifier
@@ -953,9 +934,18 @@ private fun CameraTabs(
                 // Same call site for both tabs → the same camera box stays alive across switches.
                 camera(
                     Modifier
-                        .weight(0.8f)
+                        .weight(if (energyTab) 0.8f else 0.5f)
                         .fillMaxHeight(),
                 )
+                // SECURITY: the event log in its own column on the right.
+                if (!energyTab) {
+                    Column(
+                        modifier = Modifier
+                            .weight(0.3f)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState()),
+                    ) { security.below() }
+                }
             }
         } else {
             // The top panel keeps the same height on both tabs (the taller one, ENERGY's), so the
@@ -986,7 +976,12 @@ private fun CameraTabs(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (energyTab) {
-                        RoomCard(uiState = uiState, securityState = securityState, online = usbConnected)
+                        RoomCard(
+                            uiState = uiState,
+                            securityState = securityState,
+                            lights = lightsState,
+                            lightsController = lightsController,
+                        )
                         SensorBoxesRow(
                             temp = temp,
                             tempAvailable = tempAvailable,
@@ -994,7 +989,7 @@ private fun CameraTabs(
                             humAvailable = humAvailable,
                             energyState = energyState,
                             nowMillis = uiState.nowMillis,
-                            appliances = appliances,
+                            lights = lightsState,
                             liveCount = liveCount,
                         )
                     } else {
@@ -1007,81 +1002,106 @@ private fun CameraTabs(
                         .fillMaxWidth()
                         .height(cameraHeight),
                 )
-                if (energyTab) IlluminanceCard(perception = uiState.perceptionState) else security.below()
+                if (!energyTab) security.below()
             }
         }
     }
 }
 
-/** Room ID & connectivity card (turns light red while CCTV is Armed). */
+/** Left inset of the Room card's content (the ceiling light lines up with the room name). */
+private val ROOM_CARD_START = 18.dp
+
+/**
+ * Room card (turns light red while CCTV is Armed): a surface ceiling light flush with the card's top
+ * edge above the room name (tap to switch; lit, it brightens the card), then the room name, node code,
+ * CCTV shield, aircond and fan pills, and the Schedule and Auto-off buttons on the right.
+ */
 @Composable
 private fun RoomCard(
     uiState: SensorNodeUiState,
     securityState: SecurityUiState,
-    online: Boolean,
+    lights: LightsState,
+    lightsController: LightsController?,
 ) {
     val armed = securityState.armed
+    var scheduleOpen by remember { mutableStateOf(false) }
+    // The room's ceiling light sits flush with the card's top edge above the room name; when it is on
+    // the whole card lights up.
+    val glow = lightGlow(lights.lightsOn)
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = if (armed) Color(0xFFFEE2E2) else Color(0xFFECEEEF)),
     ) {
-        Row(
-            modifier = Modifier
+        Box(
+            Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+                .ceilingLightBeam(
+                    glow = glow,
+                    lightStartX = ROOM_CARD_START,
+                    lightWidth = CEILING_LIGHT_WIDTH,
+                    lightBottomY = CEILING_LIGHT_DRAWN_HEIGHT,
+                ),
         ) {
-            Column {
-                SecurityShieldBadge(securityState)
-                Spacer(Modifier.height(4.dp))
-                Text(uiState.roomId.ifBlank { "Room1" }, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "RN-${uiState.nodeId.takeLast(6).ifBlank { "082" }}",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF6B7280),
-                )
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                // Room1 is online while its sensor module is plugged in (USB).
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(if (online) Color(0xFFC6F6D5) else Color(0xFFFEF3C7))
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(if (online) Color(0xFF22C55E) else Color(0xFFD97706)),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = if (online) "Online" else "Offline",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (online) Color(0xFF15803D) else Color(0xFFB45309),
-                        )
+            // Tap the light to switch it.
+            CeilingLight(
+                on = lights.lightsOn,
+                glow = glow,
+                modifier = Modifier
+                    .padding(start = ROOM_CARD_START)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Switch,
+                        onClickLabel = if (lights.lightsOn == true) "Turn lights off" else "Turn lights on",
+                    ) { lightsController?.switchLights(lights.lightsOn != true) },
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = ROOM_CARD_START, end = 14.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    // Room name starts just under the ceiling light.
+                    Spacer(Modifier.height(CEILING_LIGHT_DRAWN_HEIGHT + 6.dp))
+                    Text(
+                        uiState.roomId.ifBlank { "Room1" },
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF09090B),
+                        maxLines = 1,
+                    )
+                    Text(
+                        "RN-${uiState.nodeId.takeLast(6).ifBlank { "082" }}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF6B7280),
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    // Wraps onto a second line when ARMED · Recording makes it too wide.
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SecurityShieldBadge(securityState)
+                        AircondPill(on = lights.aircondOn, onToggle = { lightsController?.toggleAircond() })
+                        FanPill(on = lights.fanOn, onToggle = { lightsController?.toggleFan() })
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.BatteryFull, contentDescription = null, tint = Color(0xFF374151), modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "${uiState.batteryPercent}%",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF374151),
-                    )
-                }
+                Spacer(Modifier.width(8.dp))
+                RoomLightsButtons(
+                    lights = lights,
+                    onOpenSchedule = { scheduleOpen = true },
+                    onToggleAutoOff = { lightsController?.setAutoOff(!lights.autoOff) },
+                )
             }
         }
+    }
+    if (scheduleOpen && lightsController != null) {
+        LightsScheduleSheet(lights = lights, controller = lightsController, onDismiss = { scheduleOpen = false })
     }
 }
 
@@ -1094,7 +1114,7 @@ private fun SensorBoxesRow(
     humAvailable: Boolean,
     energyState: EnergyUiState,
     nowMillis: Long,
-    appliances: List<ApplianceToggle>,
+    lights: LightsState,
     liveCount: Int?,
 ) {
     Row(
@@ -1130,7 +1150,10 @@ private fun SensorBoxesRow(
         OccupancyCard(
             energy = energyState,
             nowMillis = nowMillis,
-            appliances = appliances,
+            lights = lights,
+            onToggleLights = null,
+            onToggleAircond = null,
+            onToggleFan = null,
             liveCount = liveCount,
             modifier = Modifier
                 .weight(1f)
@@ -1235,15 +1258,19 @@ private fun WideGaugeBox(
 }
 
 /**
- * Occupancy box: YOLO headcount + status, and round lights / fan / aircond buttons in a column on
- * the right. [wide] (landscape): the button column spans the full height beside title + count.
- * (Landscape gives this box a slim 20% column, so count and status stay stacked there too.)
+ * Occupancy box: YOLO headcount + status. While the Auto-off countdown runs, the whole card turns into
+ * "LIGHTS OFF IN n s". [wide] (landscape, where there is no Room card): the lights + aircond icons sit
+ * in a column on the right. (Landscape gives this box a slim 20% column, so count and status stay
+ * stacked there too.)
  */
 @Composable
 private fun OccupancyCard(
     energy: EnergyUiState,
     nowMillis: Long,
-    appliances: List<ApplianceToggle>,
+    lights: LightsState,
+    onToggleLights: (() -> Unit)?,
+    onToggleAircond: (() -> Unit)?,
+    onToggleFan: (() -> Unit)?,
     liveCount: Int?,
     modifier: Modifier = Modifier,
     wide: Boolean = false,
@@ -1251,13 +1278,12 @@ private fun OccupancyCard(
     // The live headcount on the preview when it is running; otherwise the last radar-triggered photo.
     val count: Int? = liveCount ?: energy.personCount
     val occupied = (count ?: 0) > 0
+    val lightsOffIn = lights.countdownSecondsLeft(nowMillis)
 
-    val countdownLeft = energy.countdownEndsAt?.let { ((it - nowMillis + 999) / 1000).coerceAtLeast(0) }
     val (status, statusColor) = when {
         liveCount != null -> if (occupied) "OCCUPIED" to Color(0xFFD97706) else "EMPTY" to Color(0xFF6B7280)
         energy.pausedForCctv -> "CCTV" to Color(0xFFB91C1C)
         energy.phase == EnergyPhase.ENTERING || energy.phase == EnergyPhase.LEAVING -> "CHECKING" to Color(0xFFD97706)
-        energy.phase == EnergyPhase.EMPTY_COUNTDOWN -> "EMPTY ${countdownLeft ?: 0}s" to Color(0xFF6B7280)
         occupied -> "OCCUPIED" to Color(0xFFD97706)
         else -> "EMPTY" to Color(0xFF6B7280)
     }
@@ -1315,18 +1341,19 @@ private fun OccupancyCard(
             )
         }
     }
-    val buttons: @Composable () -> Unit = {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            appliances.forEach { ApplianceButton(it) }
-        }
-    }
+    val cardColor by animateColorAsState(
+        if (lightsOffIn != null) Color(0xFFFEF3C7) else Color(0xFFFBF4EB),
+        label = "occupancyCard",
+    )
 
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(if (wide) 20.dp else 24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFBF4EB)),
+        colors = CardDefaults.cardColors(containerColor = cardColor),
     ) {
-        if (wide) {
+        if (lightsOffIn != null) {
+            LightsOffCountdown(secondsLeft = lightsOffIn, wide = wide)
+        } else if (wide) {
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1351,8 +1378,15 @@ private fun OccupancyCard(
                         statusPill()
                     }
                 }
-                Spacer(Modifier.width(8.dp))
-                buttons()
+                if (onToggleLights != null && onToggleAircond != null && onToggleFan != null) {
+                    Spacer(Modifier.width(8.dp))
+                    LightsAndAircondColumn(
+                        lights = lights,
+                        onToggleLights = onToggleLights,
+                        onToggleAircond = onToggleAircond,
+                        onToggleFan = onToggleFan,
+                    )
+                }
             }
         } else {
             Column(
@@ -1361,23 +1395,17 @@ private fun OccupancyCard(
                     .padding(10.dp),
             ) {
                 title()
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .padding(top = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        countBlock()
-                        Spacer(Modifier.height(6.dp))
-                        statusPill()
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    buttons()
+                    countBlock()
+                    Spacer(Modifier.height(6.dp))
+                    statusPill()
                 }
             }
         }
@@ -1387,35 +1415,7 @@ private fun OccupancyCard(
 /** Height of the people count block (fits the 34 sp number). */
 private val COUNT_BLOCK_HEIGHT = 46.dp
 
-/** Round appliance button: glossy green (on) or red (off) disc with a white glyph; tap switches. */
-@Composable
-private fun ApplianceButton(item: ApplianceToggle) {
-    val top by animateColorAsState(if (item.on) Color(0xFF4ADE80) else Color(0xFFF87171), label = "applianceTop")
-    val bottom by animateColorAsState(if (item.on) Color(0xFF16A34A) else Color(0xFFDC2626), label = "applianceBottom")
-    Box(
-        modifier = Modifier
-            .size(26.dp)
-            .shadow(3.dp, CircleShape)
-            .clip(CircleShape)
-            .background(Brush.verticalGradient(listOf(top, bottom)))
-            .border(1.5.dp, Color.White.copy(alpha = 0.6f), CircleShape)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = item.onToggle,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = item.name + if (item.on) " on" else " off",
-            tint = Color.White,
-            modifier = Modifier.size(14.dp),
-        )
-    }
-}
-
-/** Illuminance / EXIF light card. */
+/** Illuminance card (Settings → Diagnostics): live EV100 from the live view's exposure, every 10 s. */
 @Composable
 private fun IlluminanceCard(perception: PerceptionUiState) {
     Card(
@@ -1465,7 +1465,7 @@ private fun IlluminanceCard(perception: PerceptionUiState) {
             Column(horizontalAlignment = Alignment.End) {
                 val lightsOn = perception.lightsOn == true
                 Text(
-                    text = if (perception.exposureEv == null) "Awaiting Frame" else if (lightsOn) "Lights ON" else "Lights OFF",
+                    text = if (perception.exposureEv == null) "Open live view" else if (lightsOn) "Lights ON" else "Lights OFF",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF09090B),
@@ -2030,6 +2030,9 @@ private fun DiagnosticsSection(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+
+        // Live illuminance (the same reading as the occupancy card's lights icon)
+        IlluminanceCard(perception = perception)
 
         // USB Status Card
         Card(

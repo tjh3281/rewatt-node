@@ -34,7 +34,13 @@ class IntrusionAlarm(
         scope.launch {
             if (alarmActive) return@launch
             stateHolder.update {
-                it.copy(alarmActive = true, alarmEventId = eventId, alarmPhotoName = photoName, alarmScore = score)
+                it.copy(
+                    alarmActive = true,
+                    alarmEventId = eventId,
+                    alarmStartedAtMillis = System.currentTimeMillis(),
+                    alarmPhotoName = photoName,
+                    alarmScore = score,
+                )
             }
             outputs.begin(AlarmReason.INTRUDER, torch, torchRestore)
             notifier.showIntrusion(eventId, roomId, photoName, score)
@@ -74,7 +80,9 @@ class IntrusionAlarm(
             sirenJob = null
             outputs.end(AlarmReason.INTRUDER)
             notifier.cancelIntrusion()
-            stateHolder.update { it.copy(alarmActive = false, alarmEventId = null, alarmPhotoName = null, alarmScore = null) }
+            stateHolder.update {
+                it.copy(alarmActive = false, alarmEventId = null, alarmStartedAtMillis = null, alarmPhotoName = null, alarmScore = null)
+            }
         }
     }
 

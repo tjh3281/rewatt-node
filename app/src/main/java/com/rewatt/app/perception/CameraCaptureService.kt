@@ -149,7 +149,8 @@ class CameraCaptureService : LifecycleService() {
         cameraController = CameraCaptureController(
             context = this,
             yoloDetectorProvider = { yoloDetector },
-            onFramePreview = { bitmap, exposureReading, exposureMessage ->
+            // The photo's own EXIF EV is no longer used: illuminance comes from the live view (onLiveExposure).
+            onFramePreview = { bitmap, _, _ ->
                 // Fast path: show the frame immediately, clear stale boxes, defer detection/alerts.
                 stateHolder.update {
                     it.copy(
@@ -157,17 +158,11 @@ class CameraCaptureService : LifecycleService() {
                         latestFrameAtMillis = System.currentTimeMillis(),
                         yoloDetections = emptyList(),
                         yoloMessage = "Frame captured; running person detection…",
-                        exposureEv = exposureReading?.ev,
-                        exposureIso = exposureReading?.iso,
-                        exposureTimeSeconds = exposureReading?.exposureTimeSeconds,
-                        exposureAperture = exposureReading?.aperture ?: ExposureValueCalculator.FIXED_APERTURE,
-                        lightsOn = exposureReading?.lightsOn,
-                        exposureMessage = exposureMessage,
                         statusMessage = "Perception is running.",
                     )
                 }
             },
-            onFrameAnalyzed = { bitmap, detections, yoloMessage, exposureReading, exposureMessage ->
+            onFrameAnalyzed = { bitmap, detections, yoloMessage, _, _ ->
                 val yoloRan = bitmap != null && yoloDetector != null
                 val newState = stateHolder.updateAndGet {
                     it.copy(
@@ -177,12 +172,6 @@ class CameraCaptureService : LifecycleService() {
                         latestFrameAtMillis = if (bitmap != null) System.currentTimeMillis() else it.latestFrameAtMillis,
                         yoloDetections = detections,
                         yoloMessage = yoloMessage,
-                        exposureEv = exposureReading?.ev,
-                        exposureIso = exposureReading?.iso,
-                        exposureTimeSeconds = exposureReading?.exposureTimeSeconds,
-                        exposureAperture = exposureReading?.aperture ?: ExposureValueCalculator.FIXED_APERTURE,
-                        lightsOn = exposureReading?.lightsOn,
-                        exposureMessage = exposureMessage,
                         statusMessage = "Perception is running.",
                     )
                 }
@@ -193,6 +182,19 @@ class CameraCaptureService : LifecycleService() {
             },
             onError = { message -> stateHolder.update { it.copy(yoloMessage = message) } },
             liveView = appGraph.livePreviewHub,
+            // Live illuminance (every 10 s while the live view runs) → the occupancy card's lights icon.
+            onLiveExposure = { reading ->
+                stateHolder.update {
+                    it.copy(
+                        exposureEv = reading.ev,
+                        exposureIso = reading.iso,
+                        exposureTimeSeconds = reading.exposureTimeSeconds,
+                        exposureAperture = reading.aperture,
+                        lightsOn = reading.lightsOn,
+                        exposureMessage = "EV %.1f; lights %s.".format(reading.ev, if (reading.lightsOn) "on" else "off"),
+                    )
+                }
+            },
         ).also {
             it.attach(this)
             appGraph.torchRouter.controller = it // fire strobe goes through CameraX while we hold the camera

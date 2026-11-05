@@ -7,6 +7,7 @@ import com.rewatt.app.data.ReWattDatabase
 import com.rewatt.app.data.TelemetryRepository
 import com.rewatt.app.data.WeatherRepository
 import com.rewatt.app.energy.EnergyStateHolder
+import com.rewatt.app.energy.LightsController
 import com.rewatt.app.perception.LiveHeadcount
 import com.rewatt.app.perception.LivePreviewHub
 import com.rewatt.app.perception.PerceptionStateHolder
@@ -69,6 +70,11 @@ class AppGraph(context: Context) {
 
     val energyStateHolder: EnergyStateHolder by lazy {
         EnergyStateHolder()
+    }
+
+    /** Room lights (live illuminance, Auto-off, Schedule) and aircond; ticked by SensorViewModel. */
+    val lightsController: LightsController by lazy {
+        LightsController()
     }
 
     // ── CCTV (security camera) ──

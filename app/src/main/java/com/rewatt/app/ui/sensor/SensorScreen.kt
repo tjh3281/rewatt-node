@@ -40,7 +40,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
@@ -226,6 +230,7 @@ fun SensorScreen(
     onPreviewZoom: (Float) -> Unit = {},
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(StitchTab.ENERGY) }
+    var landscapeScheduleOpen by remember { mutableStateOf(false) }
 
     // Every tab follows the phone into landscape.
     val activity = LocalContext.current.findActivity()
@@ -263,6 +268,18 @@ fun SensorScreen(
                     // until its own camera stream is rendering (no black flash).
                     if (it != selectedTab) PreviewFrameCache.captureAll()
                     selectedTab = it
+                },
+                // Landscape ENERGY has no Room card: its Schedule / Auto-off sit beside the menu.
+                leading = if (landscape && selectedTab == StitchTab.ENERGY && lightsController != null) {
+                    {
+                        LightsMenuPill(
+                            lights = lightsState,
+                            onOpenSchedule = { landscapeScheduleOpen = true },
+                            onToggleAutoOff = { lightsController.setAutoOff(!lightsState.autoOff) },
+                        )
+                    }
+                } else {
+                    null
                 },
             )
         },
@@ -323,6 +340,9 @@ fun SensorScreen(
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }
+    }
+    if (landscapeScheduleOpen && lightsController != null) {
+        LightsScheduleSheet(lights = lightsState, controller = lightsController, onDismiss = { landscapeScheduleOpen = false })
     }
 }
 
@@ -411,6 +431,8 @@ private fun StitchHeader(moduleOnline: Boolean) {
 private fun StitchBottomBar(
     selectedTab: StitchTab,
     onTabSelected: (StitchTab) -> Unit,
+    /** Shown just left of the menu, in the same floating-pill style (ENERGY in landscape). */
+    leading: (@Composable () -> Unit)? = null,
 ) {
     val pill = RoundedCornerShape(50)
     Box(
@@ -420,71 +442,70 @@ private fun StitchBottomBar(
             .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
-        BoxWithConstraints(
-            modifier = Modifier
-                .widthIn(max = 460.dp)
-                .fillMaxWidth()
-                .height(58.dp)
-                .shadow(elevation = 14.dp, shape = pill, ambientColor = Color(0x22000000), spotColor = Color(0x33000000))
-                .clip(pill)
-                .background(Color.White.copy(alpha = 0.94f))
-                .border(0.5.dp, Color(0x14000000), pill)
-                .padding(4.dp),
-        ) {
-            val tabs = StitchTab.values()
-            val slot = maxWidth / tabs.size
-            val indicatorX by animateDpAsState(
-                targetValue = slot * selectedTab.ordinal,
-                animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
-                label = "tabIndicator",
-            )
-            // The sliding inner pill behind the selected tab.
-            Box(
-                Modifier
-                    .offset(x = indicatorX)
-                    .width(slot)
-                    .fillMaxHeight()
-                    .clip(pill)
-                    .background(Color(0xFFEDEFF2)),
-            )
-            Row(Modifier.fillMaxSize()) {
-                tabs.forEach { tab ->
-                    val selected = tab == selectedTab
-                    val tint by animateColorAsState(
-                        if (selected) Color(0xFF09090B) else Color(0xFF9CA3AF),
-                        label = "tabTint",
-                    )
-                    val icon = when (tab) {
-                        StitchTab.ENERGY -> Icons.Outlined.Bolt
-                        StitchTab.FIRE -> Icons.Outlined.LocalFireDepartment
-                        StitchTab.SECURITY -> Icons.Outlined.Shield
-                        StitchTab.SETTINGS -> Icons.Outlined.Settings
-                    }
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(pill)
-                            .selectable(
-                                selected = selected,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                role = Role.Tab,
-                                onClick = { onTabSelected(tab) },
-                            ),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = tab.label,
-                            fontSize = 9.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            letterSpacing = 0.3.sp,
-                            color = tint,
-                            maxLines = 1,
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            leading?.invoke()
+            BoxWithConstraints(
+                modifier = Modifier
+                    .widthIn(max = 460.dp)
+                    .fillMaxWidth()
+                    .height(BOTTOM_BAR_HEIGHT)
+                    .floatingPill(),
+            ) {
+                val tabs = StitchTab.values()
+                val slot = maxWidth / tabs.size
+                val indicatorX by animateDpAsState(
+                    targetValue = slot * selectedTab.ordinal,
+                    animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
+                    label = "tabIndicator",
+                )
+                // The sliding inner pill behind the selected tab.
+                Box(
+                    Modifier
+                        .offset(x = indicatorX)
+                        .width(slot)
+                        .fillMaxHeight()
+                        .clip(pill)
+                        .background(Color(0xFFEDEFF2)),
+                )
+                Row(Modifier.fillMaxSize()) {
+                    tabs.forEach { tab ->
+                        val selected = tab == selectedTab
+                        val tint by animateColorAsState(
+                            if (selected) Color(0xFF09090B) else Color(0xFF9CA3AF),
+                            label = "tabTint",
                         )
+                        val icon = when (tab) {
+                            StitchTab.ENERGY -> Icons.Outlined.Bolt
+                            StitchTab.FIRE -> Icons.Outlined.LocalFireDepartment
+                            StitchTab.SECURITY -> Icons.Outlined.Shield
+                            StitchTab.SETTINGS -> Icons.Outlined.Settings
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(pill)
+                                .selectable(
+                                    selected = selected,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    role = Role.Tab,
+                                    onClick = { onTabSelected(tab) },
+                                ),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = tab.label,
+                                fontSize = 9.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                letterSpacing = 0.3.sp,
+                                color = tint,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
@@ -492,16 +513,31 @@ private fun StitchBottomBar(
     }
 }
 
+/** Height of the floating menu (and the pill beside it in landscape). */
+internal val BOTTOM_BAR_HEIGHT = 58.dp
+
+/** The floating menu's look: white, slightly see-through, soft shadow, hairline edge. */
+internal fun Modifier.floatingPill(): Modifier {
+    val pill = RoundedCornerShape(50)
+    return this
+        .shadow(elevation = 14.dp, shape = pill, ambientColor = Color(0x22000000), spotColor = Color(0x33000000))
+        .clip(pill)
+        .background(Color.White.copy(alpha = 0.94f))
+        .border(0.5.dp, Color(0x14000000), pill)
+        .padding(4.dp)
+}
+
 // ── TAB 1: MAIN ───────────────────────────────────────────────────────────────
 
 /**
- * Tiny CCTV shield above the room name. Disarmed: outlined grey. Armed: solid red-gradient shield
- * plus "ARMED", and the live state ("· Motion" / "· Recording") while an event is running.
+ * Tiny CCTV shield after the room name. Disarmed: outlined grey. Armed: solid red-gradient shield
+ * plus "ARMED", and the live state ("· Motion" / "· Recording") while an event is running; the text
+ * is cut short ("…") rather than pushing the card wider.
  */
 @Composable
-private fun SecurityShieldBadge(security: SecurityUiState) {
+private fun SecurityShieldBadge(security: SecurityUiState, modifier: Modifier = Modifier) {
     val armedRed = Color(0xFFB91C1C)
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         if (security.armed) {
             Icon(
                 imageVector = Icons.Filled.Shield,
@@ -529,6 +565,8 @@ private fun SecurityShieldBadge(security: SecurityUiState) {
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 color = armedRed,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         } else {
             Icon(
@@ -551,13 +589,17 @@ private fun GasGaugeRow(
     gas: GasReading?,
     nowMillis: Long,
     fireAlarmActive: Boolean,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val fresh = gas?.takeIf { nowMillis - it.capturedAtMillis <= FireThreshold.STALE_AFTER_MS && !it.isWarmingUp }
     val voc = fresh?.vocIndex
     val nox = fresh?.noxIndex
+    // Landscape ([compact]): the cards fill the row's height, content centred.
+    val cardModifier = if (compact) Modifier.fillMaxHeight() else Modifier
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp),
     ) {
         GasGaugeCard(
             label = "VOC INDEX",
@@ -565,7 +607,8 @@ private fun GasGaugeRow(
             level = voc?.let(::vocLevel),
             colors = listOf(Color(0xFF8B5CF6), Color(0xFFEC4899)),
             fireAlarmActive = fireAlarmActive,
-            modifier = Modifier.weight(1f),
+            compact = compact,
+            modifier = Modifier.weight(1f).then(cardModifier),
         )
         GasGaugeCard(
             label = "NOx INDEX",
@@ -573,11 +616,13 @@ private fun GasGaugeRow(
             level = nox?.let(::noxLevel),
             colors = listOf(Color(0xFFF59E0B), Color(0xFFEA580C)),
             fireAlarmActive = fireAlarmActive,
-            modifier = Modifier.weight(1f),
+            compact = compact,
+            modifier = Modifier.weight(1f).then(cardModifier),
         )
     }
 }
 
+/** [compact] (landscape): the card fills its height with the label and ring centred in it. */
 @Composable
 private fun GasGaugeCard(
     label: String,
@@ -586,6 +631,7 @@ private fun GasGaugeCard(
     colors: List<Color>,
     fireAlarmActive: Boolean,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val shownLevel = if (fireAlarmActive) GasLevel.DANGER else level
     val high = shownLevel == GasLevel.DANGER
@@ -596,8 +642,8 @@ private fun GasGaugeCard(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
+                .then(if (compact) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
+                .padding(if (compact) 14.dp else 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -607,7 +653,8 @@ private fun GasGaugeCard(
                 color = if (high) Color(0xFFB91C1C) else Color(0xFF374151),
                 letterSpacing = 0.5.sp,
             )
-            Spacer(Modifier.height(16.dp))
+            // Landscape: label at the top like the status card, ring centred in the space below.
+            if (compact) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(16.dp))
             // The traffic-light pill sits in the ring's open bottom gap, so the card keeps exactly the
             // same height as the Temperature/Humidity cards.
             Box(contentAlignment = Alignment.BottomCenter) {
@@ -621,6 +668,7 @@ private fun GasGaugeCard(
                 )
                 BreathingTrafficPill(level = shownLevel, modifier = Modifier.padding(bottom = 8.dp))
             }
+            if (compact) Spacer(Modifier.weight(1f))
         }
     }
 }
@@ -682,91 +730,191 @@ private val READABLE_MAX_WIDTH = 640.dp
 
 // ── TAB 2: FIRE ───────────────────────────────────────────────────────────────
 
+private const val WARMING_UP_TEXT = "Gas sensor warming up — readings start in about a minute."
+
+/**
+ * FIRE tab. Portrait: title, status card, VOC / NOx gauges and notes, one under another. Landscape:
+ * one row of three equal, full-height cards — status (with the alarm rule), VOC, NOx — so everything
+ * shows at once without scrolling.
+ */
 @Composable
 private fun StitchFireTab(
     uiState: SensorNodeUiState,
     fireAlarmState: FireAlarmState,
 ) {
     val alarm = fireAlarmState.active
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text("Fire Safety", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
-
-        // Status card: NORMAL / FIRE ALERT
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = if (alarm) Color(0xFFFEE2E2) else Color(0xFFECEEEF)),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(if (alarm) Color(0xFFB91C1C) else Color(0xFFDCFCE7)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.LocalFireDepartment,
-                        contentDescription = null,
-                        tint = if (alarm) Color.White else Color(0xFF15803D),
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = if (alarm) "FIRE ALERT" else "NORMAL",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Black,
-                        color = if (alarm) Color(0xFFB91C1C) else Color(0xFF15803D),
-                    )
-                    Text(
-                        text = fireAlarmState.atMillis?.let {
-                            "Last alarm " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
-                                .format(java.util.Date(it))
-                        } ?: "No alarms",
-                        fontSize = 12.sp,
-                        color = Color(0xFF6B7280),
-                    )
-                }
-            }
-        }
-
-        // VOC / NOx gauges with traffic-light pills ("--" when the module has no SGP41)
-        GasGaugeRow(
-            gas = uiState.sensorState.latestGas,
-            nowMillis = uiState.nowMillis,
-            fireAlarmActive = alarm,
-        )
-
-        val gas = uiState.sensorState.latestGas
-        val warmingUp = gas != null && gas.isWarmingUp &&
-            uiState.nowMillis - gas.capturedAtMillis <= FireThreshold.STALE_AFTER_MS
+    val gas = uiState.sensorState.latestGas
+    val warmingUp = gas != null && gas.isWarmingUp &&
+        uiState.nowMillis - gas.capturedAtMillis <= FireThreshold.STALE_AFTER_MS
+    val notes: @Composable () -> Unit = {
         if (warmingUp) {
-            Text(
-                text = "Gas sensor warming up — readings start in about a minute.",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFFD97706),
-            )
+            Text(text = WARMING_UP_TEXT, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD97706))
         }
-
         Text(
             text = "Alarm when VOC Index ≥ ${FireThreshold.VOC_INDEX} or NOx Index ≥ ${FireThreshold.NOX_INDEX} for 2 s",
             fontSize = 12.sp,
             color = Color(0xFF6B7280),
         )
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        if (maxWidth > maxHeight) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                FireStatusPanel(
+                    fireAlarmState = fireAlarmState,
+                    warmingUp = warmingUp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+                GasGaugeRow(
+                    gas = gas,
+                    nowMillis = uiState.nowMillis,
+                    fireAlarmActive = alarm,
+                    compact = true,
+                    modifier = Modifier
+                        .weight(2f)
+                        .fillMaxHeight(),
+                )
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text("Fire Safety", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
+                FireStatusCard(fireAlarmState)
+                // VOC / NOx gauges with traffic-light pills ("--" when the module has no SGP41)
+                GasGaugeRow(gas = gas, nowMillis = uiState.nowMillis, fireAlarmActive = alarm)
+                notes()
+            }
+        }
+    }
+}
+
+private fun lastAlarmText(fireAlarmState: FireAlarmState): String =
+    fireAlarmState.atMillis?.let {
+        "Last alarm " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+            .format(java.util.Date(it))
+    } ?: "No alarms"
+
+/**
+ * Landscape status card, same height as the gauge cards beside it: fire icon, NORMAL / FIRE ALERT and
+ * the last alarm in the middle, the alarm rule at the bottom.
+ */
+@Composable
+private fun FireStatusPanel(fireAlarmState: FireAlarmState, warmingUp: Boolean, modifier: Modifier = Modifier) {
+    val alarm = fireAlarmState.active
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = if (alarm) Color(0xFFFEE2E2) else Color(0xFFECEEEF)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "FIRE STATUS",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (alarm) Color(0xFFB91C1C) else Color(0xFF374151),
+                letterSpacing = 0.5.sp,
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(if (alarm) Color(0xFFB91C1C) else Color(0xFFDCFCE7)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.LocalFireDepartment,
+                    contentDescription = null,
+                    tint = if (alarm) Color.White else Color(0xFF15803D),
+                    modifier = Modifier.size(26.dp),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = if (alarm) "FIRE ALERT" else "NORMAL",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Black,
+                color = if (alarm) Color(0xFFB91C1C) else Color(0xFF15803D),
+                maxLines = 1,
+            )
+            Text(
+                text = if (warmingUp) WARMING_UP_TEXT else lastAlarmText(fireAlarmState),
+                fontSize = 11.sp,
+                color = if (warmingUp) Color(0xFFD97706) else Color(0xFF6B7280),
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "Alarm at VOC ≥ ${FireThreshold.VOC_INDEX} or NOx ≥ ${FireThreshold.NOX_INDEX}",
+                fontSize = 10.sp,
+                color = Color(0xFF9CA3AF),
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+/** Portrait status card: NORMAL / FIRE ALERT and the last alarm time. */
+@Composable
+private fun FireStatusCard(fireAlarmState: FireAlarmState) {
+    val alarm = fireAlarmState.active
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = if (alarm) Color(0xFFFEE2E2) else Color(0xFFECEEEF)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(if (alarm) Color(0xFFB91C1C) else Color(0xFFDCFCE7)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.LocalFireDepartment,
+                    contentDescription = null,
+                    tint = if (alarm) Color.White else Color(0xFF15803D),
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = if (alarm) "FIRE ALERT" else "NORMAL",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Black,
+                    color = if (alarm) Color(0xFFB91C1C) else Color(0xFF15803D),
+                )
+                Text(
+                    text = lastAlarmText(fireAlarmState),
+                    fontSize = 12.sp,
+                    color = Color(0xFF6B7280),
+                )
+            }
+        }
     }
 }
 
@@ -813,18 +961,18 @@ data class SecurityTabParts(
     val armed: Boolean = false,
     /** Title + arm card; `compact` = the slim landscape column. */
     val side: @Composable (compact: Boolean) -> Unit = {},
-    /** Event history: below the camera (portrait), or in a column right of it (landscape). */
-    val below: @Composable () -> Unit = {},
+    /** Event history: below the camera (portrait), or under the arm card, simplified (`compact`, landscape). */
+    val below: @Composable (compact: Boolean) -> Unit = {},
 )
 
 /**
  * ENERGY and SECURITY as ONE layout around ONE camera box. Only the panels change with [tab]; the
  * live camera box is the same composable at the same place, so switching between the two tabs never
  * stops, reloads or moves it.
- *  - Portrait: tab panel on top (kept at the same height for both tabs) → camera → tab content below
- *    (SECURITY: event history; the illuminance card lives in Settings → Diagnostics).
- *  - Landscape: tab panel in a slim left column (20%) → camera taking 80% of the width (SECURITY:
- *    camera 50% and the event log in a 30% column on the right).
+ *  - Portrait: tab panel on top → camera → tab content below (SECURITY: event history; the
+ *    illuminance card lives in Settings → Diagnostics).
+ *  - Landscape: tab panel in a left column → camera filling the rest (ENERGY 20% / 80%; SECURITY:
+ *    arm card with the event log under it, 30% / 70%).
  */
 @Composable
 private fun CameraTabs(
@@ -882,13 +1030,13 @@ private fun CameraTabs(
             ) {
                 Column(
                     modifier = Modifier
-                        .weight(0.2f)
+                        .weight(if (energyTab) 0.2f else 0.3f)
                         .fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (energyTab) {
                         WideGaugeBox(
-                            label = "TEMPERATURE",
+                            label = "TEMP",
                             value = temp ?: 0f,
                             maxValue = 50f,
                             centerText = if (temp != null) "${temp.toInt()}°" else "--",
@@ -925,31 +1073,26 @@ private fun CameraTabs(
                                 .fillMaxWidth(),
                         )
                     } else {
+                        // Arm card, then the event log right under it.
                         Column(
                             modifier = Modifier.verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) { security.side(true) }
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            security.side(true)
+                            security.below(true)
+                        }
                     }
                 }
                 // Same call site for both tabs → the same camera box stays alive across switches.
                 camera(
                     Modifier
-                        .weight(if (energyTab) 0.8f else 0.5f)
+                        .weight(if (energyTab) 0.8f else 0.7f)
                         .fillMaxHeight(),
                 )
-                // SECURITY: the event log in its own column on the right.
-                if (!energyTab) {
-                    Column(
-                        modifier = Modifier
-                            .weight(0.3f)
-                            .fillMaxHeight()
-                            .verticalScroll(rememberScrollState()),
-                    ) { security.below() }
-                }
             }
         } else {
-            // The top panel keeps the same height on both tabs (the taller one, ENERGY's), so the
-            // camera box doesn't move when switching.
+            // The camera fills what the current tab's top panel leaves (no gap under SECURITY's
+            // shorter panel).
             val density = LocalDensity.current
             var panelHeight by remember { mutableStateOf(0.dp) }
             val cameraHeight = if (panelHeight == 0.dp) {
@@ -967,12 +1110,7 @@ private fun CameraTabs(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Column(
-                    modifier = Modifier
-                        .heightIn(min = panelHeight)
-                        .onSizeChanged {
-                            val measured = with(density) { it.height.toDp() }
-                            if (measured > panelHeight) panelHeight = measured
-                        },
+                    modifier = Modifier.onSizeChanged { panelHeight = with(density) { it.height.toDp() } },
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (energyTab) {
@@ -1002,7 +1140,7 @@ private fun CameraTabs(
                         .fillMaxWidth()
                         .height(cameraHeight),
                 )
-                if (!energyTab) security.below()
+                if (!energyTab) security.below(false)
             }
         }
     }
@@ -1065,13 +1203,18 @@ private fun RoomCard(
                 Column(Modifier.weight(1f)) {
                     // Room name starts just under the ceiling light.
                     Spacer(Modifier.height(CEILING_LIGHT_DRAWN_HEIGHT + 6.dp))
-                    Text(
-                        uiState.roomId.ifBlank { "Room1" },
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF09090B),
-                        maxLines = 1,
-                    )
+                    // Room name with the CCTV shield right after it.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            uiState.roomId.ifBlank { "Room1" },
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF09090B),
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        SecurityShieldBadge(securityState, Modifier.weight(1f, fill = false))
+                    }
                     Text(
                         "RN-${uiState.nodeId.takeLast(6).ifBlank { "082" }}",
                         fontSize = 12.sp,
@@ -1080,13 +1223,7 @@ private fun RoomCard(
                         maxLines = 1,
                     )
                     Spacer(Modifier.height(6.dp))
-                    // Wraps onto a second line when ARMED · Recording makes it too wide.
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        itemVerticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        SecurityShieldBadge(securityState)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         AircondPill(on = lights.aircondOn, onToggle = { lightsController?.toggleAircond() })
                         FanPill(on = lights.fanOn, onToggle = { lightsController?.toggleFan() })
                     }
@@ -1232,15 +1369,16 @@ private fun WideGaugeBox(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
+            // Shrinks to fit beside the ring on narrow phones instead of running under it.
+            BasicText(
                 text = label,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF374151),
-                letterSpacing = 0.3.sp,
+                style = TextStyle(fontWeight = FontWeight.Bold, color = Color(0xFF374151), letterSpacing = 0.3.sp),
                 maxLines = 1,
                 softWrap = false,
-                modifier = Modifier.weight(1f),
+                autoSize = TextAutoSize.StepBased(minFontSize = 6.sp, maxFontSize = 10.sp, stepSize = 0.5.sp),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 4.dp),
             )
             StitchRingGauge(
                 value = value,
@@ -1300,13 +1438,14 @@ private fun OccupancyCard(
                 Icon(Icons.Outlined.Person, contentDescription = null, tint = Color(0xFFEA580C), modifier = Modifier.size(11.dp))
             }
             Spacer(Modifier.width(4.dp))
-            Text(
+            // Shrinks to fit narrow phones / large system fonts instead of being cut off.
+            BasicText(
                 text = "OCCUPANCY",
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF374151),
+                style = TextStyle(fontWeight = FontWeight.Bold, color = Color(0xFF374151)),
                 maxLines = 1,
                 softWrap = false,
+                autoSize = TextAutoSize.StepBased(minFontSize = 6.sp, maxFontSize = 10.sp, stepSize = 0.5.sp),
+                modifier = Modifier.weight(1f, fill = false),
             )
         }
     }

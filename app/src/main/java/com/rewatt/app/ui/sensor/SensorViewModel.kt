@@ -10,6 +10,7 @@ import com.rewatt.app.data.MqttState
 import com.rewatt.app.data.MqttSyncRepository
 import com.rewatt.app.data.SensorDashboardState
 import com.rewatt.app.data.TelemetryRepository
+import com.rewatt.app.energy.LightsChange
 import com.rewatt.app.energy.LightsController
 import com.rewatt.app.energy.LightsNotifier
 import com.rewatt.app.perception.PerceptionStateHolder
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -73,13 +75,15 @@ class SensorViewModel(
     private val lightsNotifier = LightsNotifier(appContext)
 
     init {
-        // A notification for every lights on ⇄ off change (skipping the one already there when this starts).
+        // A notification only when the app switches the lights (Auto-off, Schedule, a tap). The camera
+        // seeing the lights change just updates the icon. Skips the change already there at start.
         viewModelScope.launch {
             lightsController.state
                 .map { it.lastChange }
                 .distinctUntilChanged()
                 .drop(1)
                 .filterNotNull()
+                .filter { it.reason != LightsChange.Reason.CAMERA }
                 .collect { lightsNotifier.notify(it, mqttRepository.roomId.ifBlank { "Room1" }) }
         }
         // Ticker loop: update time every second, step the lights (Auto-off / Schedule) and emit MQTT 1 Hz payload
@@ -88,7 +92,7 @@ class SensorViewModel(
                 val current = System.currentTimeMillis()
                 nowMillisFlow.value = current
                 val perception = perceptionStateHolder.state.value
-                lightsController.tick(current, perception.liveCount(current), perception.lightsOn)
+                lightsController.tick(current, perception.liveCount(current), perception.lightsOn, perception.lightsReadAtMillis)
                 streamMqttTelemetry(current)
                 delay(1000L)
             }

@@ -12,9 +12,10 @@ import com.rewatt.app.R
 import com.rewatt.app.security.localizedContext
 
 /**
- * "Lights ON / OFF" notification each time the lights icon changes, saying why (camera, Auto-off,
- * schedule, a tap). Silent heads-up; one notification that is replaced by the next change, so a
- * flickering reading can't pile them up, and it clears itself after [TIMEOUT_MS].
+ * "Lights ON / OFF" notification each time the app switches the lights, saying why (Auto-off,
+ * schedule, a tap); changes the camera only sees aren't notified (see SensorViewModel). Silent
+ * heads-up; one notification that is replaced by the next change, and it clears itself after
+ * [TIMEOUT_MS].
  */
 class LightsNotifier(context: Context) {
     private val appContext = context.applicationContext

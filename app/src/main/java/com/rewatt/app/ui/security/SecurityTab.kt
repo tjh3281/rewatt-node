@@ -66,6 +66,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -115,27 +116,32 @@ fun SecuritySidePanel(
     ArmCard(state = state, canArm = canArm, onArmChange = onArmChange, compact = compact)
 }
 
-/** SECURITY tab, next to the shared camera box (below it in portrait, right of it in landscape): CCTV event history + its detail dialog. */
+/**
+ * SECURITY tab, CCTV event history + its detail dialog: below the camera in portrait; under the arm
+ * card in landscape, simplified ([compact]: no storage line, two-line rows).
+ */
 @Composable
-fun SecurityHistorySection(viewModel: SecurityViewModel) {
+fun SecurityHistorySection(viewModel: SecurityViewModel, compact: Boolean = false) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     val events by viewModel.events.collectAsStateWithLifecycle()
     var openEvent by remember { mutableStateOf<SecurityEvent?>(null) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.sec_history), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink)
-        Text(
-            stringResource(R.string.sec_storage, Formatter.formatShortFileSize(context, events.sumOf { it.sizeBytes })),
-            fontSize = 12.sp,
-            color = Muted,
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
+        Text(stringResource(R.string.sec_history), fontSize = if (compact) 13.sp else 16.sp, fontWeight = FontWeight.Bold, color = Ink)
+        if (!compact) {
+            Text(
+                stringResource(R.string.sec_storage, Formatter.formatShortFileSize(context, events.sumOf { it.sizeBytes })),
+                fontSize = 12.sp,
+                color = Muted,
+            )
+        }
         val finished = events.filter { it.result == EventResult.STRANGER || it.result == EventResult.NO_FACE || it.id == state.activeEventId }
         if (finished.isEmpty()) {
-            Text(stringResource(R.string.sec_history_empty), fontSize = 13.sp, color = Muted)
+            Text(stringResource(R.string.sec_history_empty), fontSize = if (compact) 11.sp else 13.sp, color = Muted)
         }
         finished.forEach { event ->
-            EventRow(event = event, onClick = { openEvent = event })
+            if (compact) CompactEventRow(event = event, onClick = { openEvent = event }) else EventRow(event = event, onClick = { openEvent = event })
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -587,6 +593,35 @@ private fun EventRow(event: SecurityEvent, onClick: () -> Unit) {
                 text = resultLabel(event.result) + (event.bestScore?.takeIf { stranger }?.let { " %.2f".format(it) } ?: ""),
                 bg = if (stranger) Color(0xFFFEE2E2) else Color(0xFFF3F4F6),
                 fg = if (stranger) Danger else Muted,
+            )
+        }
+    }
+}
+
+/** Landscape log row: when, then the result. */
+@Composable
+private fun CompactEventRow(event: SecurityEvent, onClick: () -> Unit) {
+    val stranger = event.result == EventResult.STRANGER
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(event.startedAtMillis)),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.sp,
+                color = Ink,
+                maxLines = 1,
+            )
+            Text(
+                resultLabel(event.result),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (stranger) Danger else Muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

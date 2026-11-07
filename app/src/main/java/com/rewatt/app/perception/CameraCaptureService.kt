@@ -191,6 +191,7 @@ class CameraCaptureService : LifecycleService() {
                         exposureTimeSeconds = reading.exposureTimeSeconds,
                         exposureAperture = reading.aperture,
                         lightsOn = reading.lightsOn,
+                        lightsReadAtMillis = System.currentTimeMillis(),
                         exposureMessage = "EV %.1f; lights %s.".format(reading.ev, if (reading.lightsOn) "on" else "off"),
                     )
                 }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -403,7 +404,7 @@ internal fun AircondPill(on: Boolean, onToggle: () -> Unit) {
         onColor = Color(0xFF0284C7),
         onBackground = Color(0xFFE0F2FE),
         onToggle = onToggle,
-    ) { tint -> Icon(Icons.Filled.AcUnit, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp)) }
+    ) { tint -> Icon(Icons.Filled.AcUnit, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp)) }
 }
 
 /** Fan switch in the Room card, same style as [AircondPill]: "FAN ON" (teal, turning) / "FAN OFF" (grey). */
@@ -415,7 +416,7 @@ internal fun FanPill(on: Boolean, onToggle: () -> Unit) {
         onColor = Color(0xFF0D9488),
         onBackground = Color(0xFFCCFBF1),
         onToggle = onToggle,
-    ) { tint -> FanGlyph(tint = tint, spinning = on, modifier = Modifier.size(16.dp)) }
+    ) { tint -> FanGlyph(tint = tint, spinning = on, modifier = Modifier.size(14.dp)) }
 }
 
 @Composable
@@ -434,12 +435,12 @@ private fun DevicePill(
             .clip(RoundedCornerShape(50))
             .background(background)
             .clickable(role = Role.Switch, onClick = onToggle)
-            .padding(start = 8.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
+            .padding(start = 7.dp, end = 9.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         icon(tint)
-        Spacer(Modifier.width(4.dp))
-        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = tint, maxLines = 1)
+        Spacer(Modifier.width(3.dp))
+        Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = tint, maxLines = 1, softWrap = false)
     }
 }
 
@@ -495,6 +496,65 @@ internal fun RoomLightsButtons(lights: LightsState, onOpenSchedule: () -> Unit, 
             activeBackground = Color(0xFFDCFCE7),
             onClick = onToggleAutoOff,
         )
+    }
+}
+
+/**
+ * Landscape ENERGY: Schedule and Auto-off as a small floating pill just left of the menu, styled like
+ * the menu's tabs (icon over a short label). Active: the button fills with its colour (indigo /
+ * green) and the label shows the state ("OFF 21:30", "AUTO-OFF ON").
+ */
+@Composable
+internal fun LightsMenuPill(lights: LightsState, onOpenSchedule: () -> Unit, onToggleAutoOff: () -> Unit) {
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier
+            .height(BOTTOM_BAR_HEIGHT)
+            .floatingPill(),
+    ) {
+        LightsMenuButton(
+            label = lights.schedule?.let { "${if (it.turnOn) "ON" else "OFF"} ${formatTime(context, it.atMillis)}" } ?: "SCHEDULE",
+            icon = Icons.Outlined.Schedule,
+            active = lights.schedule != null,
+            activeColor = Color(0xFF4F46E5),
+            activeBackground = Color(0xFFE0E7FF),
+            onClick = onOpenSchedule,
+        )
+        LightsMenuButton(
+            label = if (lights.autoOff) "AUTO-OFF ON" else "AUTO-OFF",
+            icon = Icons.Outlined.Eco,
+            active = lights.autoOff,
+            activeColor = Color(0xFF15803D),
+            activeBackground = Color(0xFFDCFCE7),
+            onClick = onToggleAutoOff,
+        )
+    }
+}
+
+@Composable
+private fun LightsMenuButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    active: Boolean,
+    activeColor: Color,
+    activeBackground: Color,
+    onClick: () -> Unit,
+) {
+    val background by animateColorAsState(if (active) activeBackground else Color.Transparent, label = "menuButtonBg")
+    val tint by animateColorAsState(if (active) activeColor else Color(0xFF6B7280), label = "menuButtonTint")
+    Column(
+        modifier = Modifier
+            .width(78.dp)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(50))
+            .background(background)
+            .clickable(role = Role.Button, onClick = onClick),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.height(2.dp))
+        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp, color = tint, maxLines = 1, softWrap = false)
     }
 }
 

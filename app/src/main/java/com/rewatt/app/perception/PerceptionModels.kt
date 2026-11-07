@@ -57,6 +57,8 @@ data class PerceptionUiState(
     val exposureTimeSeconds: Double? = null,
     val exposureAperture: Double = ExposureValueCalculator.FIXED_APERTURE,
     val lightsOn: Boolean? = null,
+    /** When [lightsOn] was last read from the live view (each reading, even an unchanged one). */
+    val lightsReadAtMillis: Long? = null,
     val exposureMessage: String = "Exposure is waiting for camera capture.",
     val selectedYoloModel: YoloModel = YoloModel.Yolo26n416,
     /** When the camera pipeline last finished a capture (success or failure). */

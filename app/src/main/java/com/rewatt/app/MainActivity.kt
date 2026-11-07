@@ -146,7 +146,7 @@ class MainActivity : AppCompatActivity() {
                                 compact = compact,
                             )
                         },
-                        below = { SecurityHistorySection(securityViewModel) },
+                        below = { compact -> SecurityHistorySection(securityViewModel, compact) },
                     ),
                     settingsSecurityContent = {
                         SecuritySettingsSection(

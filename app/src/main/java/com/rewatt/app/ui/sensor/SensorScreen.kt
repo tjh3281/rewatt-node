@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.ui.text.TextStyle
+import com.rewatt.app.BuildConfig
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -730,12 +731,44 @@ private val READABLE_MAX_WIDTH = 640.dp
 
 // ── TAB 2: FIRE ───────────────────────────────────────────────────────────────
 
-private const val WARMING_UP_TEXT = "Gas sensor warming up — readings start in about a minute."
+/** What the VOC / NOx readings say right now; [level] null = no fresh reading (module off, warming up). */
+private data class GasStatus(val level: GasLevel?, val voc: Int?, val nox: Int?, val warmingUp: Boolean)
+
+private fun gasStatus(gas: GasReading?, nowMillis: Long, fireAlarmActive: Boolean): GasStatus {
+    val recent = gas?.takeIf { nowMillis - it.capturedAtMillis <= FireThreshold.STALE_AFTER_MS }
+    val fresh = recent?.takeIf { !it.isWarmingUp }
+    val voc = fresh?.vocIndex
+    val nox = fresh?.noxIndex
+    val worst = listOfNotNull(voc?.let(::vocLevel), nox?.let(::noxLevel)).maxByOrNull { it.ordinal }
+    return GasStatus(
+        level = if (fireAlarmActive) GasLevel.DANGER else worst,
+        voc = voc,
+        nox = nox,
+        warmingUp = recent?.isWarmingUp == true,
+    )
+}
 
 /**
- * FIRE tab. Portrait: title, status card, VOC / NOx gauges and notes, one under another. Landscape:
- * one row of three equal, full-height cards — status (with the alarm rule), VOC, NOx — so everything
- * shows at once without scrolling.
+ * Debug builds only: show the FIRE tab with sample readings, to see each state's design without a
+ * real gas leak. Start with `adb shell am start -S -n com.rewatt.app/.MainActivity --es preview_gas
+ * caution` (or `danger` / `normal`). Display only — the real alarm never sees these values.
+ */
+@Composable
+private fun rememberGasPreview(nowMillis: Long): GasReading? {
+    val activity = LocalContext.current.findActivity()
+    val kind = remember { activity?.intent?.getStringExtra("preview_gas")?.takeIf { BuildConfig.DEBUG } } ?: return null
+    return when (kind) {
+        "danger" -> GasReading(vocIndex = 146, noxIndex = 6, capturedAtMillis = nowMillis)
+        "caution" -> GasReading(vocIndex = 121, noxIndex = 1, capturedAtMillis = nowMillis)
+        "normal" -> GasReading(vocIndex = 98, noxIndex = 1, capturedAtMillis = nowMillis)
+        else -> null
+    }
+}
+
+/**
+ * FIRE tab. Portrait: title, the gas status card, then the VOC / NOx gauges. Landscape: one row of
+ * three equal, full-height cards — status, VOC, NOx — so everything shows at once. The status comes
+ * from the readings themselves (the alarm itself is the full-screen page).
  */
 @Composable
 private fun StitchFireTab(
@@ -743,19 +776,9 @@ private fun StitchFireTab(
     fireAlarmState: FireAlarmState,
 ) {
     val alarm = fireAlarmState.active
-    val gas = uiState.sensorState.latestGas
-    val warmingUp = gas != null && gas.isWarmingUp &&
-        uiState.nowMillis - gas.capturedAtMillis <= FireThreshold.STALE_AFTER_MS
-    val notes: @Composable () -> Unit = {
-        if (warmingUp) {
-            Text(text = WARMING_UP_TEXT, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD97706))
-        }
-        Text(
-            text = "Alarm when VOC Index ≥ ${FireThreshold.VOC_INDEX} or NOx Index ≥ ${FireThreshold.NOX_INDEX} for 2 s",
-            fontSize = 12.sp,
-            color = Color(0xFF6B7280),
-        )
-    }
+    val preview = rememberGasPreview(uiState.nowMillis)
+    val gas = preview ?: uiState.sensorState.latestGas
+    val status = gasStatus(gas, uiState.nowMillis, alarm)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth > maxHeight) {
@@ -765,9 +788,10 @@ private fun StitchFireTab(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                FireStatusPanel(
-                    fireAlarmState = fireAlarmState,
-                    warmingUp = warmingUp,
+                GasStatusCard(
+                    status = status,
+                    preview = preview != null,
+                    tall = true,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight(),
@@ -791,127 +815,130 @@ private fun StitchFireTab(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Text("Fire Safety", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
-                FireStatusCard(fireAlarmState)
+                GasStatusCard(status = status, preview = preview != null, tall = false, modifier = Modifier.fillMaxWidth())
                 // VOC / NOx gauges with traffic-light pills ("--" when the module has no SGP41)
                 GasGaugeRow(gas = gas, nowMillis = uiState.nowMillis, fireAlarmActive = alarm)
-                notes()
             }
         }
     }
 }
 
-private fun lastAlarmText(fireAlarmState: FireAlarmState): String =
-    fireAlarmState.atMillis?.let {
-        "Last alarm " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
-            .format(java.util.Date(it))
-    } ?: "No alarms"
+private data class GasStatusLook(
+    val title: String,
+    val color: Color,
+    val iconBackground: Color,
+    val cardColor: Color,
+    val fire: FireIntensity,
+)
+
+private fun GasStatus.look(): GasStatusLook = when (level) {
+    null -> GasStatusLook(if (warmingUp) "WARMING UP" else "NO DATA", Color(0xFF6B7280), Color(0xFFE5E7EB), Color(0xFFECEEEF), FireIntensity.NONE)
+    GasLevel.SAFE -> GasStatusLook("NORMAL", Color(0xFF15803D), Color(0xFFDCFCE7), Color(0xFFECEEEF), FireIntensity.NONE)
+    GasLevel.CAUTION -> GasStatusLook("CAUTION", Color(0xFFB45309), Color(0xFFFDE68A), Color(0xFFFFF7ED), FireIntensity.CAUTION)
+    GasLevel.DANGER -> GasStatusLook("FIRE RISK", Color(0xFFB91C1C), Color(0xFFB91C1C), Color(0xFFFEE2E2), FireIntensity.DANGER)
+}
 
 /**
- * Landscape status card, same height as the gauge cards beside it: fire icon, NORMAL / FIRE ALERT and
- * the last alarm in the middle, the alarm rule at the bottom.
+ * The FIRE tab's status card, from the VOC / NOx readings (the numbers are on the gauges beside it):
+ * NO DATA (grey), NORMAL (green), CAUTION (amber, low flickering flames along the bottom) or FIRE RISK
+ * (red, tall flames, pulsing red edge and icon). [tall]: the landscape card, icon and word stacked in
+ * the middle.
  */
 @Composable
-private fun FireStatusPanel(fireAlarmState: FireAlarmState, warmingUp: Boolean, modifier: Modifier = Modifier) {
-    val alarm = fireAlarmState.active
+private fun GasStatusCard(status: GasStatus, preview: Boolean, tall: Boolean, modifier: Modifier = Modifier) {
+    val look = status.look()
+    val danger = look.fire == FireIntensity.DANGER
+    val abnormal = look.fire != FireIntensity.NONE
+    val cardColor by animateColorAsState(look.cardColor, label = "gasCard")
+    val pulse by rememberInfiniteTransition(label = "gasPulse").animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "gasPulseValue",
+    )
+    val shape = RoundedCornerShape(24.dp)
     Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = if (alarm) Color(0xFFFEE2E2) else Color(0xFFECEEEF)),
+        modifier = modifier.then(
+            if (danger) Modifier.border(2.dp, Color(0xFFDC2626).copy(alpha = pulse), shape) else Modifier,
+        ),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = cardColor),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Box(
+            Modifier
+                .then(if (tall) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
+                .fireEffect(look.fire),
         ) {
-            Text(
-                text = "FIRE STATUS",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (alarm) Color(0xFFB91C1C) else Color(0xFF374151),
-                letterSpacing = 0.5.sp,
-            )
-            Spacer(Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(if (alarm) Color(0xFFB91C1C) else Color(0xFFDCFCE7)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Outlined.LocalFireDepartment,
-                    contentDescription = null,
-                    tint = if (alarm) Color.White else Color(0xFF15803D),
-                    modifier = Modifier.size(26.dp),
+            val icon: @Composable () -> Unit = {
+                Box(
+                    modifier = Modifier
+                        .size(if (tall) 48.dp else 44.dp)
+                        .scale(if (danger) 0.92f + 0.12f * pulse else 1f)
+                        .clip(CircleShape)
+                        .background(look.iconBackground),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.LocalFireDepartment,
+                        contentDescription = null,
+                        tint = if (danger) Color.White else look.color,
+                        modifier = Modifier.size(if (tall) 26.dp else 24.dp),
+                    )
+                }
+            }
+            val title: @Composable () -> Unit = {
+                Text(look.title, fontSize = if (tall) 20.sp else 22.sp, fontWeight = FontWeight.Black, color = look.color, maxLines = 1)
+            }
+            val rule: @Composable () -> Unit = {
+                Text(
+                    "Alarm at VOC ≥ ${FireThreshold.VOC_INDEX} or NOx ≥ ${FireThreshold.NOX_INDEX}",
+                    fontSize = 10.sp,
+                    color = Color(0xFF9CA3AF),
+                    textAlign = if (tall) TextAlign.Center else TextAlign.Start,
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = if (alarm) "FIRE ALERT" else "NORMAL",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Black,
-                color = if (alarm) Color(0xFFB91C1C) else Color(0xFF15803D),
-                maxLines = 1,
-            )
-            Text(
-                text = if (warmingUp) WARMING_UP_TEXT else lastAlarmText(fireAlarmState),
-                fontSize = 11.sp,
-                color = if (warmingUp) Color(0xFFD97706) else Color(0xFF6B7280),
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "Alarm at VOC ≥ ${FireThreshold.VOC_INDEX} or NOx ≥ ${FireThreshold.NOX_INDEX}",
-                fontSize = 10.sp,
-                color = Color(0xFF9CA3AF),
-                textAlign = TextAlign.Center,
-            )
-        }
-    }
-}
 
-/** Portrait status card: NORMAL / FIRE ALERT and the last alarm time. */
-@Composable
-private fun FireStatusCard(fireAlarmState: FireAlarmState) {
-    val alarm = fireAlarmState.active
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = if (alarm) Color(0xFFFEE2E2) else Color(0xFFECEEEF)),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(if (alarm) Color(0xFFB91C1C) else Color(0xFFDCFCE7)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Outlined.LocalFireDepartment,
-                    contentDescription = null,
-                    tint = if (alarm) Color.White else Color(0xFF15803D),
-                    modifier = Modifier.size(24.dp),
-                )
+            if (tall) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("STATUS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151), letterSpacing = 0.5.sp)
+                    Spacer(Modifier.weight(1f))
+                    icon()
+                    Spacer(Modifier.height(8.dp))
+                    title()
+                    Spacer(Modifier.weight(1f))
+                    // The flames fill the bottom when abnormal; the rule shows when all is calm.
+                    if (!abnormal) rule()
+                }
+            } else {
+                Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = if (abnormal) 52.dp else 16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        icon()
+                        Spacer(Modifier.width(14.dp))
+                        title()
+                    }
+                    if (!abnormal) {
+                        Spacer(Modifier.height(8.dp))
+                        rule()
+                    }
+                }
             }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
+            if (preview) {
                 Text(
-                    text = if (alarm) "FIRE ALERT" else "NORMAL",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Black,
-                    color = if (alarm) Color(0xFFB91C1C) else Color(0xFF15803D),
-                )
-                Text(
-                    text = lastAlarmText(fireAlarmState),
-                    fontSize = 12.sp,
-                    color = Color(0xFF6B7280),
+                    "PREVIEW",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xCC09090B))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }
         }

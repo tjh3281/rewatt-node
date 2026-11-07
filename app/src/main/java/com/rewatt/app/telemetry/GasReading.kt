@@ -41,7 +41,7 @@ object FireThreshold {
     const val NOX_INDEX = 5
 
     /** Amber "caution" band just below the fire thresholds (display only — no alarm). */
-    const val VOC_CAUTION = 115
+    const val VOC_CAUTION = 100
     const val NOX_CAUTION = 3
 
     /** Consecutive ~1 s samples above threshold before the alarm sounds (filters one-off spikes). */

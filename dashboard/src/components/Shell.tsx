@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { useFacultyLive, useStore } from '../data/store';
-import { CAMPUS, FACULTIES, facultyById } from '../data/um';
+import { ACCOUNTS, useFacultyLive, useStore, type AccountId } from '../data/store';
+import { CAMPUS, FACULTIES, HOME, facultyById } from '../data/um';
 import type { FacultyDef, Rollout } from '../data/types';
 import { clock, dateLong, duration } from '../lib/format';
 import { Icon, Pill, type Tone } from './ui';
@@ -12,12 +12,14 @@ export const ROLLOUT: Record<Rollout, { label: string; tone: Tone }> = {
   baseline: { label: 'Baseline only', tone: 'neutral' },
 };
 
-/** The faculty in the URL, or the last one opened (Law by default). */
+/** The home account always works on the home; otherwise the faculty in the URL, or the last one opened (Law by default). */
 export function useCurrentFaculty(): FacultyDef {
   const { pathname } = useLocation();
-  const found = facultyById(pathname.split('/')[1]);
+  const { account } = useStore();
+  const inUrl = facultyById(pathname.split('/')[1]);
+  const found = account === 'home' ? HOME : inUrl?.id === HOME.id ? undefined : inUrl;
   useEffect(() => {
-    if (found) {
+    if (found && found.id !== HOME.id) {
       try {
         localStorage.setItem('rw.fac', found.id);
       } catch {
@@ -37,6 +39,16 @@ export function useCurrentFaculty(): FacultyDef {
 
 function navItems(fac: FacultyDef, ghosts: number) {
   const base = `/${fac.id}`;
+  if (fac.id === HOME.id) {
+    return [
+      { to: base, icon: 'home', label: 'Overview', end: true },
+      { to: `${base}/cameras`, icon: 'videocam', label: 'Cameras' },
+      { to: `${base}/ghost-rooms`, icon: 'running_with_errors', label: 'Ghost Rooms', badge: ghosts },
+      { to: `${base}/rooms`, icon: 'meeting_room', label: 'Rooms' },
+      { to: `${base}/safety`, icon: 'shield', label: 'Fire & Security' },
+      { to: `${base}/nodes`, icon: 'sensors', label: 'Sensor Nodes' },
+    ];
+  }
   return [
     { to: base, icon: 'dashboard', label: 'Command Center', end: true },
     { to: `${base}/ghost-rooms`, icon: 'running_with_errors', label: 'Ghost Rooms', badge: ghosts },
@@ -49,25 +61,37 @@ function navItems(fac: FacultyDef, ghosts: number) {
 }
 
 export function Shell({ children }: { children: ReactNode }) {
+  const { account } = useStore();
   const fac = useCurrentFaculty();
   const live = useFacultyLive(fac);
   const ghosts = live.ghosts.length;
   const items = navItems(fac, ghosts);
+  const home = account === 'home';
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  // Each account sees only its own space: the home is private, the campus pages are the admin's.
+  useEffect(() => {
+    if (home && !pathname.startsWith('/home') && pathname !== '/settings') navigate('/home', { replace: true });
+    if (!home && pathname.startsWith('/home')) navigate('/', { replace: true });
+  }, [home, pathname, navigate]);
 
   return (
     <div className="shell">
       <aside className="sidebar">
-        <Link to="/" className="brand">
+        <Link to={ACCOUNTS[account].start} className="brand">
           <img src="/logo.png" alt="" />
           <span>
             <b>ReWatt</b>
-            <small>Energy intelligence · {CAMPUS.short}</small>
+            <small>{home ? 'Smart home' : `Energy intelligence · ${CAMPUS.short}`}</small>
           </span>
         </Link>
-        <NavLink to="/" end className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <Icon name="school" />
-          UM Campus
-        </NavLink>
+        {!home && (
+          <NavLink to="/" end className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <Icon name="school" />
+            UM Campus
+          </NavLink>
+        )}
         <div className="nav-label">{fac.short}</div>
         {items.map((it) => (
           <NavLink key={it.to} to={it.to} end={it.end} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
@@ -98,7 +122,7 @@ export function Shell({ children }: { children: ReactNode }) {
 }
 
 function Topbar({ fac }: { fac: FacultyDef }) {
-  const { now } = useStore();
+  const { now, account } = useStore();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -122,51 +146,140 @@ function Topbar({ fac }: { fac: FacultyDef }) {
 
   return (
     <header className="topbar">
-      <Link to="/" className="mobile-brand" aria-label="ReWatt home">
+      <Link to={ACCOUNTS[account].start} className="mobile-brand" aria-label="ReWatt home">
         <img src="/logo.png" alt="" />
       </Link>
-      <div className="menu-wrap" ref={menuRef}>
-        <button className="chip-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu">
-          <Icon name={onCampus ? 'school' : 'apartment'} />
+      {account === 'home' ? (
+        <span className="chip-btn" style={{ cursor: 'default' }}>
+          <Icon name="home" />
           <span>
-            {onCampus ? CAMPUS.name : fac.name}
+            {HOME.name}
             <span className="muted hide-sm" style={{ fontWeight: 500 }}>
-              {onCampus ? ` · ${FACULTIES.length} faculties` : ` · ${CAMPUS.short}`}
+              {` · ${HOME.rooms.length} rooms`}
             </span>
           </span>
-          <Icon name="expand_more" />
-        </button>
-        {open && (
-          <div className="menu" role="menu">
-            <button role="menuitem" onClick={() => (setOpen(false), navigate('/'))}>
-              <Icon name="school" />
-              <span style={{ flex: 1 }}>
-                <b>{CAMPUS.name}</b>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  Campus overview · all faculties
-                </div>
+        </span>
+      ) : (
+        <div className="menu-wrap" ref={menuRef}>
+          <button className="chip-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu">
+            <Icon name={onCampus ? 'school' : 'apartment'} />
+            <span>
+              {onCampus ? CAMPUS.name : fac.name}
+              <span className="muted hide-sm" style={{ fontWeight: 500 }}>
+                {onCampus ? ` · ${FACULTIES.length} faculties` : ` · ${CAMPUS.short}`}
               </span>
-            </button>
-            <div className="sep" />
-            {FACULTIES.map((f) => (
-              <button key={f.id} role="menuitem" onClick={() => switchTo(f.id)}>
-                <Icon name="apartment" className="faint" />
-                <span style={{ flex: 1, fontWeight: f.id === fac.id && !onCampus ? 800 : 500 }}>{f.name}</span>
-                <Pill tone={ROLLOUT[f.rollout].tone}>{ROLLOUT[f.rollout].label}</Pill>
+            </span>
+            <Icon name="expand_more" />
+          </button>
+          {open && (
+            <div className="menu" role="menu">
+              <button role="menuitem" onClick={() => (setOpen(false), navigate('/'))}>
+                <Icon name="school" />
+                <span style={{ flex: 1 }}>
+                  <b>{CAMPUS.name}</b>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    Campus overview · all faculties
+                  </div>
+                </span>
               </button>
-            ))}
-          </div>
-        )}
-      </div>
+              <div className="sep" />
+              {FACULTIES.map((f) => (
+                <button key={f.id} role="menuitem" onClick={() => switchTo(f.id)}>
+                  <Icon name="apartment" className="faint" />
+                  <span style={{ flex: 1, fontWeight: f.id === fac.id && !onCampus ? 800 : 500 }}>{f.name}</span>
+                  <Pill tone={ROLLOUT[f.rollout].tone}>{ROLLOUT[f.rollout].label}</Pill>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <span className="spacer" />
       <span className="hide-sm muted num" style={{ fontSize: 13 }} title="Malaysia time">
         {dateLong(now)} · <b style={{ color: 'var(--ink)' }}>{clock(now, true)}</b>
       </span>
-      <span className="pill tone-neutral hide-sm" style={{ padding: '4px 10px 4px 4px' }}>
-        <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--brand)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 10 }}>FA</span>
-        Facility Admin
-      </span>
+      <AccountMenu />
     </header>
+  );
+}
+
+/** The signed-in account (top right): tap it, then "Switch account" to move between the campus and the home. */
+function AccountMenu() {
+  const { account, setAccount } = useStore();
+  const [open, setOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const me = ACCOUNTS[account];
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) {
+        setOpen(false);
+        setSwitching(false);
+      }
+    };
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const choose = (id: AccountId) => {
+    setOpen(false);
+    setSwitching(false);
+    if (id === account) return;
+    setAccount(id);
+    navigate(ACCOUNTS[id].start);
+  };
+
+  return (
+    <div className="menu-wrap" ref={ref}>
+      <button className="account-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu">
+        <span className={`avatar ${account}`}>{me.initials}</span>
+        <span className="hide-sm">{me.name}</span>
+        <Icon name="expand_more" />
+      </button>
+      {open && (
+        <div className="menu account-menu" role="menu">
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '8px 10px' }}>
+            <span className={`avatar ${account}`} style={{ width: 36, height: 36, fontSize: 12 }}>
+              {me.initials}
+            </span>
+            <span>
+              <b>{me.name}</b>
+              <div className="muted" style={{ fontSize: 12 }}>
+                {me.place}
+              </div>
+            </span>
+          </div>
+          <div className="sep" />
+          {!switching ? (
+            <button role="menuitem" onClick={() => setSwitching(true)}>
+              <Icon name="switch_account" />
+              Switch account
+            </button>
+          ) : (
+            <>
+              <div className="nav-label" style={{ padding: '6px 10px 4px' }}>
+                Switch to
+              </div>
+              {(Object.keys(ACCOUNTS) as AccountId[]).map((id) => (
+                <button key={id} role="menuitem" onClick={() => choose(id)}>
+                  <span className={`avatar ${id}`}>{ACCOUNTS[id].initials}</span>
+                  <span style={{ flex: 1 }}>
+                    <b>{ACCOUNTS[id].name}</b>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {ACCOUNTS[id].place}
+                    </div>
+                  </span>
+                  {id === account && <Icon name="check" className="faint" />}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -180,17 +293,25 @@ function BottomNav({ fac, ghosts }: { fac: FacultyDef; ghosts: number }) {
       {label}
     </NavLink>
   );
+  const home = fac.id === HOME.id;
+  const moreLinks = home
+    ? [
+        [`${base}/ghost-rooms`, 'running_with_errors', ghosts ? `Ghost Rooms · ${ghosts}` : 'Ghost Rooms'],
+        [`${base}/nodes`, 'sensors', 'Sensor Nodes'],
+        ['/settings', 'settings', 'Settings'],
+      ]
+    : [
+        ['/', 'school', 'UM Campus'],
+        [`${base}/occupancy`, 'groups', 'Occupancy'],
+        [`${base}/nodes`, 'sensors', 'Sensor Nodes'],
+        [`${base}/reports`, 'analytics', 'Reports'],
+        ['/settings', 'settings', 'Settings'],
+      ];
   return (
     <>
       {more && (
         <div className="menu" style={{ position: 'fixed', left: 16, right: 16, bottom: 82, top: 'auto', zIndex: 31 }}>
-          {[
-            ['/', 'school', 'UM Campus'],
-            [`${base}/occupancy`, 'groups', 'Occupancy'],
-            [`${base}/nodes`, 'sensors', 'Sensor Nodes'],
-            [`${base}/reports`, 'analytics', 'Reports'],
-            ['/settings', 'settings', 'Settings'],
-          ].map(([to, icon, label]) => (
+          {moreLinks.map(([to, icon, label]) => (
             <Link key={to} to={to} onClick={() => setMore(false)}>
               <Icon name={icon} />
               {label}
@@ -199,8 +320,10 @@ function BottomNav({ fac, ghosts }: { fac: FacultyDef; ghosts: number }) {
         </div>
       )}
       <nav className="bottom-nav" aria-label="Main">
-        {link(base, 'dashboard', 'Home', true)}
-        {link(`${base}/ghost-rooms`, 'running_with_errors', ghosts ? `Ghost · ${ghosts}` : 'Ghost')}
+        {link(base, home ? 'home' : 'dashboard', 'Home', true)}
+        {home
+          ? link(`${base}/cameras`, 'videocam', 'Cameras')
+          : link(`${base}/ghost-rooms`, 'running_with_errors', ghosts ? `Ghost · ${ghosts}` : 'Ghost')}
         {link(`${base}/rooms`, 'meeting_room', 'Rooms')}
         {link(`${base}/safety`, 'shield', 'Safety')}
         <button onClick={() => setMore((m) => !m)} className={more ? 'active' : ''} aria-expanded={more}>

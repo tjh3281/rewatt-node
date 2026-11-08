@@ -17,7 +17,7 @@ import {
   withOverride,
   type Overrides,
 } from './sim';
-import type { DaySummary, Episode, FacultyDef, NodeLive, RoomLive, ScheduledAction, Settings, System } from './types';
+import type { DaySummary, Episode, FacultyDef, NodeLive, RoomLive, RoomType, ScheduledAction, Settings, System } from './types';
 
 export const SYSTEMS: System[] = ['ac', 'lights', 'fan'];
 
@@ -157,6 +157,8 @@ export function occupancyHeatmap(fac: FacultyDef, now: number, settings: Setting
 const fmtHM = (t: number) =>
   new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kuala_Lumpur' });
 
+const HOME_TYPES: RoomType[] = ['Living Room', 'Kitchen', 'Bedroom'];
+
 /** Today's and tomorrow's planned actions from the timetables (up to 2 days ahead). */
 export function actionSchedule(fac: FacultyDef, now: number, settings: Settings): ScheduledAction[] {
   const out: ScheduledAction[] = [];
@@ -165,6 +167,20 @@ export function actionSchedule(fac: FacultyDef, now: number, settings: Settings)
     for (const def of fac.rooms) {
       if (!def.instrumented || isOfflineRoom(fac.id, def.code)) continue;
       const rd = simRoomDay(fac, def, day, settings);
+      // At home only the bedtime pre-cool is planned; on campus, the big teaching rooms get the lot.
+      if (HOME_TYPES.includes(def.type)) {
+        for (const p of rd.precools) {
+          out.push({
+            at: p.start,
+            roomCode: def.code,
+            kind: 'precool',
+            label: 'Pre-cool to 23°C',
+            reason: `${p.session.title} at ${fmtHM(p.session.start)}`,
+            status: p.start <= now ? 'done' : 'pending',
+          });
+        }
+        continue;
+      }
       const big = ['Auditorium', 'Lecture / Moot', 'Lecture Hall', 'Computer Lab'].includes(def.type);
       if (big) {
         for (const p of rd.precools) {

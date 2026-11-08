@@ -4,6 +4,8 @@ import { actionSchedule, SYSTEMS } from '../data/metrics';
 import { outdoorTemp, securityEvents } from '../data/sim';
 import type { FacultyDef } from '../data/types';
 import { clock, dateTime, duration, energy, pct, rm } from '../lib/format';
+import { HOME } from '../data/um';
+import { CctvTile } from '../components/Cctv';
 import { TrendChart } from '../components/charts';
 import { RoomDrawer } from '../components/RoomDrawer';
 import { Card, DevicePills, FloorGrid, Icon, Kpi, PageHead, Pill, StatusLegend } from '../components/ui';
@@ -28,12 +30,14 @@ export function Command({ fac }: { fac: FacultyDef }) {
   const deltaT = live.indoorAvg != null ? outdoor - live.indoorAvg : null;
   const nextPrecool = actionSchedule(fac, now, settings).find((a) => a.kind === 'precool' && a.status === 'pending');
   const underused = live.rooms.filter((r) => r.status === 'occupied' && r.headcount / r.def.capacity < 0.25 && r.def.capacity >= 20);
+  const home = fac.id === HOME.id;
+  const cams = live.rooms.filter((r) => r.def.cctv && r.def.instrumented);
 
   return (
     <>
       <PageHead
-        title="Energy Command Center"
-        subtitle={`${fac.name} · ${monitored} of ${fac.spaces} spaces monitored`}
+        title={home ? 'Home overview' : 'Energy Command Center'}
+        subtitle={home ? `${fac.name} · ${monitored} rooms, each with a node and camera` : `${fac.name} · ${monitored} of ${fac.spaces} spaces monitored`}
         actions={
           <>
             <Pill tone="good" dot>
@@ -66,6 +70,24 @@ export function Command({ fac }: { fac: FacultyDef }) {
           sub={live.ghosts.length ? `Drawing ${f.ghostKW.toFixed(1)} kW · ${rm(f.ghostKW * settings.tariff)}/hour` : 'All clear right now'}
         />
       </div>
+
+      {home && (
+        <Card
+          title="Cameras"
+          subtitle="Live from each room's node · tap one for the room"
+          right={
+            <Link to={`/${fac.id}/cameras`} className="btn small">
+              View all
+            </Link>
+          }
+        >
+          <div className="cctv-grid">
+            {cams.map((r, i) => (
+              <CctvTile key={r.def.code} room={r} now={now} index={i} onOpen={() => setRoom(r.def.code)} />
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="grid cols-main">
         <Card title="Live room status" subtitle={`${monitored} spaces · tap a room for detail`} right={<StatusLegend withPending={fac.rollout === 'onboarding'} />}>

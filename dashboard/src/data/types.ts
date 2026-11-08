@@ -10,7 +10,11 @@ export type RoomType =
   | 'Computer Lab'
   | 'Library Room'
   | 'PG Carrel'
-  | '24-Hour Centre';
+  | '24-Hour Centre'
+  // A home (the private space)
+  | 'Living Room'
+  | 'Kitchen'
+  | 'Bedroom';
 
 /**
  * occupied: people in the room · ghost: empty with AC / lights / fan on past the grace period ·
@@ -39,6 +43,10 @@ export interface RoomDef {
   autoOff: boolean;
   /** CCTV face check armed after hours. */
   cctv: boolean;
+  /** A still from the room's camera, shown on its CCTV tile (else the room is drawn). */
+  photo?: string;
+  /** Nobody uses the room in the demo (its camera photo shows it empty): no bookings, 0 people. */
+  empty?: boolean;
 }
 
 export interface FacultyDef {

@@ -2,8 +2,9 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../data/store';
 import { facultyLive, savedToDate } from '../data/metrics';
-import { CAMPUS, FACULTIES, facultyById } from '../data/um';
+import { CAMPUS, FACULTIES, FACULTY_LOCATIONS, facultyById } from '../data/um';
 import { energy, num, pct, rm, rmShort } from '../lib/format';
+import { CampusMap, type MapPin } from '../components/CampusMap';
 import { HBars } from '../components/charts';
 import { ROLLOUT } from '../components/Shell';
 import { Card, Icon, Meter, PageHead, Pill } from '../components/ui';
@@ -33,9 +34,47 @@ export function Campus() {
   const law = measured.find((m) => m.fac.rollout === 'live');
   const lawReduction = law?.reduction ?? 0;
 
+  const pins: MapPin[] = FACULTIES.filter((f) => FACULTY_LOCATIONS[f.id]).map((f) => ({
+    id: f.id,
+    label: f.short,
+    position: FACULTY_LOCATIONS[f.id].position,
+    side: FACULTY_LOCATIONS[f.id].side,
+    nodes: f.rooms.filter((r) => r.instrumented).length,
+    rollout: f.rollout,
+    ghosts: measured.find((m) => m.fac.id === f.id)?.live.ghosts.length ?? 0,
+  }));
+
   return (
     <>
       <PageHead title={CAMPUS.name} subtitle={`Campus energy overview · ${FACULTIES.length} faculties · ${num(spaces)} teaching spaces`} />
+
+      <CampusMap
+        pins={pins}
+        overlay={
+          <div className="map-card">
+            <div className="top">
+              <b>{CAMPUS.short} nodes</b>
+              <Pill tone="good" dot>
+                Live
+              </Pill>
+              <span className="figure">
+                {instrumented}
+                <small> / {spaces} rooms</small>
+              </span>
+            </div>
+            <div className="bar">
+              <div style={{ width: `${Math.max(2, (instrumented / spaces) * 100)}%` }} />
+            </div>
+            <div className="bottom">
+              <Pill tone="neutral">{pct(instrumented / spaces, 1)}</Pill>
+              <span>{spaces - instrumented} rooms to go</span>
+              <span style={{ marginLeft: 'auto', color: ghosts ? 'var(--danger)' : undefined, fontWeight: ghosts ? 700 : 400 }}>
+                {ghosts} ghost {ghosts === 1 ? 'room' : 'rooms'} now
+              </span>
+            </div>
+          </div>
+        }
+      />
 
       <section className="hero">
         <div>
@@ -132,7 +171,7 @@ export function Campus() {
         })}
       </div>
 
-      <Card title="Faculty comparison" subtitle="RM wasted per year · live faculties measured, the rest estimated from UM audit averages">
+      <Card title="Faculty comparison" subtitle="RM wasted per year · from each faculty's energy audit">
         <HBars
           format={rm}
           items={[...FACULTIES]

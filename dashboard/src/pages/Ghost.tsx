@@ -47,15 +47,6 @@ export function Ghost({ fac }: { fac: FacultyDef }) {
         <Kpi label="Response rate" icon="how_to_reg" tone="good" value={pct(f.response.rate, 0)} sub={`${f.response.actioned} of ${f.response.alerts} alerts · avg ${Math.round(f.response.avgMin)} min (7 days)`} />
       </div>
 
-      <div className="banner tone-plan">
-        <Icon name="verified_user" fill />
-        <div>
-          <b>Human verification required</b>
-          ReWatt alerts the zone's facility staff, who confirm each switch-off, so exam halls, research equipment and occupied rooms are never cut by mistake. The one exception
-          is lights in rooms where the ReWatt app's <b>Auto-off</b> is on: they switch off after {10} s empty and a {5} s countdown.
-        </div>
-      </div>
-
       {live.ghosts.length === 0 ? (
         <Card>
           <div style={{ textAlign: 'center', padding: 20 }}>

@@ -2,8 +2,8 @@ import type { FacultyDef, RoomDef, RoomType } from './types';
 
 /**
  * Universiti Malaya, faculty by faculty. DEMO DATA: room lists, audit figures and estimates are
- * illustrative, not measured. Law is the live pilot, FSKTM is being onboarded, the rest are
- * baseline estimates until nodes are installed.
+ * illustrative, not measured. Law is the live pilot; every other faculty (FCSIT, FS, FSS, Edu Fac,
+ * FPE, FK, Med, FAB) is being onboarded with at least one node. Short names follow the campus map.
  */
 export const CAMPUS = { name: 'Universiti Malaya', short: 'UM', city: 'Kuala Lumpur' };
 
@@ -113,7 +113,7 @@ export const FACULTIES: FacultyDef[] = [
   {
     id: 'fsktm',
     name: 'Faculty of Computer Science & IT',
-    short: 'FSKTM',
+    short: 'FCSIT',
     rollout: 'onboarding',
     annualMWh: 2410,
     auditWasteRate: 0.438,
@@ -127,19 +127,109 @@ export const FACULTIES: FacultyDef[] = [
       { zone: 'Zone C', name: 'Daniel' },
     ],
   },
-  baseline('eng', 'Faculty of Engineering', 'Engineering', 4180, 0.382, 86),
-  baseline('fbe', 'Faculty of Business & Economics', 'Business', 1920, 0.451, 41),
-  baseline('med', 'Faculty of Medicine', 'Medicine', 5640, 0.294, 62),
-  baseline('sci', 'Faculty of Science', 'Science', 3920, 0.362, 74),
-  baseline('fass', 'Faculty of Arts & Social Sciences', 'FASS', 2260, 0.417, 58),
-  baseline('edu', 'Faculty of Education', 'Education', 1180, 0.396, 33),
+  pilot('eng', 'Faculty of Engineering', 'FK', 4180, 0.382, 86, 3, ['Hamid', 'Priya', 'Wei Jie']),
+  pilot('fbe', 'Faculty of Business & Economics', 'FPE', 1920, 0.451, 41, 2, ['Aina', 'Ravi', 'Chong']),
+  pilot('med', 'Faculty of Medicine', 'Med', 5640, 0.294, 62, 2, ['Zul', 'Shanti', 'Lim']),
+  pilot('sci', 'Faculty of Science', 'FS', 3920, 0.362, 74, 3, ['Rahman', 'Devi', 'Tan']),
+  pilot('fass', 'Faculty of Arts & Social Sciences', 'FSS', 2260, 0.417, 58, 2, ['Siti', 'Kumar', 'Ong']),
+  pilot('edu', 'Faculty of Education', 'Edu Fac', 1180, 0.396, 33, 1, ['Nadia', 'Bala', 'Yap']),
+  pilot('fab', 'Faculty of Built Environment', 'FAB', 1450, 0.41, 40, 2, ['Hafiz', 'Mei', 'Suresh']),
 ];
 
-function baseline(id: string, name: string, short: string, annualMWh: number, rate: number, spaces: number): FacultyDef {
-  return { id, name, short, rollout: 'baseline', annualMWh, auditWasteRate: rate, spaces, floors: [], rooms: [], staff: [] };
+/** A faculty starting its pilot: all its rooms listed, the first [nodes] of them with a node. */
+function pilot(id: string, name: string, short: string, annualMWh: number, rate: number, spaces: number, nodes: number, staff: string[]): FacultyDef {
+  return {
+    id,
+    name,
+    short,
+    rollout: 'onboarding',
+    annualMWh,
+    auditWasteRate: rate,
+    spaces,
+    floors: ['Ground', 'Level 1', 'Level 2', 'Level 3'],
+    rooms: genericRooms(spaces, nodes),
+    pilotStart: '2026-10-26',
+    staff: ['Zone A', 'Zone B', 'Zone C'].map((zone, i) => ({ zone, name: staff[i] })),
+  };
 }
 
-export const facultyById = (id: string | undefined) => FACULTIES.find((f) => f.id === id);
+/**
+ * A faculty's teaching spaces: two big lecture halls (DK), then lecture rooms (BK), tutorial rooms
+ * (BT), computer labs (MK) and seminar rooms (SR), spread over four floors.
+ */
+function genericRooms(spaces: number, nodes: number): RoomDef[] {
+  const floors = ['Ground', 'Level 1', 'Level 2', 'Level 3'];
+  const zones = ['Zone A', 'Zone A', 'Zone B', 'Zone C'];
+  const plan: { prefix: string; name: string; type: RoomType; cap: number; share: number; fans: number }[] = [
+    { prefix: 'BK', name: 'Bilik Kuliah', type: 'Lecture Hall', cap: 80, share: 0.3, fans: 0 },
+    { prefix: 'BT', name: 'Bilik Tutorial', type: 'Tutorial Room', cap: 30, share: 0.35, fans: 2 },
+    { prefix: 'MK', name: 'Makmal Komputer', type: 'Computer Lab', cap: 40, share: 0.15, fans: 0 },
+    { prefix: 'SR', name: 'Seminar Room', type: 'Seminar Room', cap: 24, share: 0.2, fans: 2 },
+  ];
+  const rooms: RoomDef[] = [];
+  const add = (code: string, name: string, type: RoomType, cap: number, fans: number) => {
+    const f = Math.min(3, Math.floor((rooms.length / spaces) * 4));
+    rooms.push(room(code, name, type, cap, floors[f], `Block ${'ABCD'[f]}`, zones[f], { fans, instrumented: rooms.length < nodes, cctv: type === 'Computer Lab' }));
+  };
+  add('DK1', 'Dewan Kuliah 1', 'Lecture Hall', 220, 0);
+  add('DK2', 'Dewan Kuliah 2', 'Lecture Hall', 160, 0);
+  const rest = spaces - 2;
+  plan.forEach((p, i) => {
+    const n = i === plan.length - 1 ? spaces - rooms.length : Math.round(rest * p.share);
+    for (let k = 1; k <= n; k++) add(`${p.prefix}${pad(k)}`, `${p.name} ${k}`, p.type, p.cap + (k % 3) * 10, p.fans);
+  });
+  return rooms;
+}
+
+/**
+ * The private space: one home with a node in every room (demo). It never shows in the campus
+ * lists — only the home account sees it.
+ */
+export const HOME: FacultyDef = {
+  id: 'home',
+  name: 'My Home',
+  short: 'Home',
+  rollout: 'live',
+  annualMWh: 6.4,
+  auditWasteRate: 0.3,
+  spaces: 4,
+  floors: ['Ground', 'Upper'],
+  rooms: [
+    // Photos: put the camera stills in dashboard/public/cctv/ (shown instead of the drawn room).
+    // Their photos show the rooms empty, so nobody is in them in the demo either.
+    { ...room('Living', 'Living Room', 'Living Room', 5, 'Ground', 'Home', 'Home', { fans: 2, cctv: true }), photo: '/cctv/living-room.jpg', empty: true },
+    { ...room('Kitchen', 'Kitchen', 'Kitchen', 3, 'Ground', 'Home', 'Home', { fans: 1, autoOff: true, cctv: true }), photo: '/cctv/kitchen.jpg', empty: true },
+    room('Room1', 'Room 1', 'Bedroom', 2, 'Upper', 'Home', 'Home', { fans: 1, autoOff: true, cctv: true }),
+    room('Room2', 'Room 2', 'Bedroom', 2, 'Upper', 'Home', 'Home', { fans: 1, autoOff: true, cctv: true }),
+  ],
+  pilotStart: '2026-09-01',
+  staff: [{ zone: 'Home', name: 'You' }],
+};
+
+/** A faculty or the home, by id (the URL's first part). */
+export const facultyById = (id: string | undefined) => (id === HOME.id ? HOME : FACULTIES.find((f) => f.id === id));
+
+/**
+ * Where each faculty is on the UM campus (lat, lng; approximate), for the campus map, and which side
+ * of its dot the label goes so neighbouring labels don't overlap.
+ */
+export const FACULTY_LOCATIONS: Record<string, { position: [number, number]; side: 'left' | 'right' | 'below' | 'above' }> = {
+  fsktm: { position: [3.1281, 101.651], side: 'right' },
+  sci: { position: [3.124, 101.654], side: 'right' },
+  fass: { position: [3.122, 101.6523], side: 'left' },
+  edu: { position: [3.1208, 101.6528], side: 'left' },
+  fbe: { position: [3.1191, 101.6532], side: 'left' },
+  eng: { position: [3.1186, 101.6564], side: 'below' },
+  law: { position: [3.1185, 101.6607], side: 'right' },
+  med: { position: [3.1159, 101.6532], side: 'right' },
+  fab: { position: [3.1169, 101.6553], side: 'right' },
+};
+
+/** The campus map's starting view. */
+export const CAMPUS_CENTER: [number, number] = [3.1218, 101.6556];
+
+/** Where the map shows the campus name (over the map's own small "Universiti Malaya" text). */
+export const CAMPUS_LABEL_AT: [number, number] = [3.1258, 101.6557];
 
 /** Course names used for the demo timetables. */
 export const COURSES: Record<string, string[]> = {
@@ -157,6 +247,13 @@ export const COURSES: Record<string, string[]> = {
     'Legal Research',
     'Moot practice',
   ],
+  eng: ['Thermodynamics', 'Circuit Analysis', 'Fluid Mechanics', 'Engineering Maths', 'Structural Analysis', 'Control Systems', 'Materials Science'],
+  fbe: ['Microeconomics', 'Macroeconomics', 'Accounting', 'Corporate Finance', 'Marketing', 'Business Statistics'],
+  med: ['Anatomy', 'Physiology', 'Pharmacology', 'Pathology', 'Clinical Skills', 'Public Health'],
+  sci: ['Organic Chemistry', 'Physics I', 'Biology', 'Calculus', 'Genetics', 'Statistics'],
+  fass: ['Sociology', 'Malaysian History', 'Linguistics', 'Geography', 'Media Studies', 'Anthropology'],
+  fab: ['Architectural Design', 'Building Services', 'Urban Planning', 'Quantity Surveying', 'Construction Technology'],
+  edu: ['Pedagogy', 'Educational Psychology', 'Curriculum Design', 'Assessment', 'TESL Methods'],
   fsktm: [
     'Data Structures',
     'Computer Networks',

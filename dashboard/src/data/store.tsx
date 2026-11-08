@@ -24,7 +24,17 @@ export const APP_RULES = {
   fireHits: 2,
 };
 
+/** Who is signed in: the campus facility admin (public space) or a home owner (private space). */
+export type AccountId = 'campus' | 'home';
+
+export const ACCOUNTS: Record<AccountId, { name: string; place: string; initials: string; start: string }> = {
+  campus: { name: 'Facility Admin', place: 'Universiti Malaya', initials: 'FA', start: '/' },
+  home: { name: 'Home Owner', place: 'My Home', initials: 'HO', start: '/home' },
+};
+
 interface Store {
+  account: AccountId;
+  setAccount: (a: AccountId) => void;
   now: number;
   settings: Settings;
   setSettings: (s: Settings) => void;
@@ -66,6 +76,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [settings, setSettingsState] = useState<Settings>(() => load('rw.settings', DEFAULT_SETTINGS));
   const [overrides, setOverrides] = useState<Overrides>(() => load<Overrides>('rw.overrides', {}));
   const [alarm, setAlarm] = useState<AlarmState | null>(null);
+  const [account, setAccountState] = useState<AccountId>(() => {
+    try {
+      return localStorage.getItem('rw.account') === 'home' ? 'home' : 'campus';
+    } catch {
+      return 'campus';
+    }
+  });
+  const setAccount = useCallback((a: AccountId) => {
+    setAccountState(a);
+    try {
+      localStorage.setItem('rw.account', a);
+    } catch {
+      /* private window: the account just isn't remembered */
+    }
+  }, []);
 
   // Ticks on each new wall-clock second.
   useEffect(() => {
@@ -92,8 +117,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ now, settings, setSettings, overrides, switchOff, alarm, setAlarm }),
-    [now, settings, setSettings, overrides, switchOff, alarm],
+    () => ({ account, setAccount, now, settings, setSettings, overrides, switchOff, alarm, setAlarm }),
+    [account, setAccount, now, settings, setSettings, overrides, switchOff, alarm],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

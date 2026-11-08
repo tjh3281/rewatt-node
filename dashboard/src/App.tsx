@@ -5,6 +5,7 @@ import { facultyById } from './data/um';
 import type { FacultyDef } from './data/types';
 import { Shell } from './components/Shell';
 import { Baseline } from './pages/Baseline';
+import { Cameras } from './pages/Cameras';
 import { Campus } from './pages/Campus';
 import { Command } from './pages/Command';
 import { Ghost } from './pages/Ghost';
@@ -32,6 +33,7 @@ export function App() {
             <Route path="/" element={<Campus />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/:fac" element={<FacultyRoute page={(f) => <Command key={f.id} fac={f} />} />} />
+            <Route path="/:fac/cameras" element={<FacultyRoute page={(f) => <Cameras key={f.id} fac={f} />} />} />
             <Route path="/:fac/ghost-rooms" element={<FacultyRoute page={(f) => <Ghost key={f.id} fac={f} />} />} />
             <Route path="/:fac/rooms" element={<FacultyRoute page={(f) => <Rooms key={f.id} fac={f} />} />} />
             <Route path="/:fac/occupancy" element={<FacultyRoute page={(f) => <Occupancy key={f.id} fac={f} />} />} />

@@ -97,6 +97,10 @@ const TEMPLATES: Record<RoomType, Template> = {
     closeHour: 24,
     precool: false,
   },
+  // A home: breakfast, lunch and evenings in the living room and kitchen; nights (and a nap) in the bedrooms.
+  'Living Room': { slots: [[6.5, 8], [12, 13.5], [17.5, 19], [19.5, 23]], p: 0.85, fill: [0.3, 0.8], weekend: [1, 1], leaveOn: 0.45, closeHour: 24, precool: false },
+  Kitchen: { slots: [[6.5, 7.5], [12, 13], [18, 19.5]], p: 0.9, fill: [0.3, 0.7], weekend: [1, 1], leaveOn: 0.5, closeHour: 24, precool: false },
+  Bedroom: { slots: [[0, 6.75], [13.5, 14.5], [22.5, 24]], p: 0.85, fill: [0.5, 1], weekend: [1, 1], leaveOn: 0.35, closeHour: 24, precool: true },
 };
 
 export const typeTemplate = (type: RoomType) => TEMPLATES[type];
@@ -120,6 +124,26 @@ export interface RoomDay {
 
 const dayCache = new Map<string, RoomDay>();
 
+/** What a booked slot is called; null = a class from the faculty's course list. */
+function sessionTitle(def: RoomDef, fromHour: number): string | null {
+  switch (def.type) {
+    case 'Living Room':
+      return 'Family time';
+    case 'Kitchen':
+      return 'Cooking';
+    case 'Bedroom':
+      return fromHour === 13.5 ? 'Nap' : 'Sleep';
+    case 'Library Room':
+      return 'Group study booking';
+    case 'PG Carrel':
+      return 'Research';
+    case '24-Hour Centre':
+      return 'Open study';
+    default:
+      return def.code.startsWith('MM') ? 'Moot practice' : null;
+  }
+}
+
 export function simRoomDay(fac: FacultyDef, def: RoomDef, day: number, settings: Settings): RoomDay {
   const key = `${fac.id}|${def.code}|${day}|${settings.graceMin}|${settings.precoolLeadMin}`;
   const cached = dayCache.get(key);
@@ -132,21 +156,12 @@ export function simRoomDay(fac: FacultyDef, def: RoomDef, day: number, settings:
   const courses = COURSES[fac.id] ?? COURSES.law;
 
   const sessions: Session[] = [];
-  for (const [from, to] of t.slots) {
+  for (const [from, to] of def.empty ? [] : t.slots) {
     const booked = r() < p;
     const fill = between(r, t.fill[0], t.fill[1]);
     const pick = r();
     if (!booked) continue;
-    const title =
-      def.type === 'Library Room'
-        ? 'Group study booking'
-        : def.type === 'PG Carrel'
-          ? 'Research'
-          : def.type === '24-Hour Centre'
-            ? 'Open study'
-            : def.code.startsWith('MM')
-              ? 'Moot practice'
-              : courses[Math.floor(pick * courses.length)];
+    const title = sessionTitle(def, from) ?? courses[Math.floor(pick * courses.length)];
     sessions.push({ start: day + from * H, end: day + to * H, title, expected: Math.max(1, Math.round(def.capacity * fill)) });
   }
 
@@ -189,6 +204,7 @@ export function simRoomDay(fac: FacultyDef, def: RoomDef, day: number, settings:
     sessions.forEach((s, i) => {
       const prev = sessions[i - 1];
       if (prev && s.start - prev.end < 60 * M) return;
+      if (s.start === day) return; // carries on from last night (e.g. sleep past midnight): already cool
       precools.push({ start: s.start - settings.precoolLeadMin * M, end: s.start, session: s });
     });
   }
@@ -286,7 +302,10 @@ export function liveRoom(fac: FacultyDef, def: RoomDef, now: number, settings: S
     acSetpoint: 23,
     voc: Math.round(100 + 6 * wobble(now, def.code + 'voc', 240_000) + (session ? 8 : 0)),
     nox: 1,
-    cctvArmed: def.cctv && (hourOf(now) >= 22 || hourOf(now) < 7 || weekdayOf(now) === 0),
+    // Campus: after hours and Sundays. Home: overnight only, while the family sleeps.
+    cctvArmed:
+      def.cctv &&
+      (fac.id === 'home' ? hourOf(now) >= 23.5 || hourOf(now) < 6 : hourOf(now) >= 22 || hourOf(now) < 7 || weekdayOf(now) === 0),
     lastCountAt: now - (hash(def.code + Math.floor(now / 5000)) % 4) * 250,
   };
 
@@ -426,7 +445,7 @@ export function securityEvents(fac: FacultyDef, now: number): SecurityEvent[] {
 }
 
 export function fireEvents(fac: FacultyDef, now: number): FireEvent[] {
-  if (fac.rollout !== 'live') return [];
+  if (fac.id !== 'law') return []; // the demo's fire history is the Law pilot's
   const today = dayStart(now);
   const events: FireEvent[] = [
     { id: 'fire-test', roomCode: 'DK1', at: today - 5 * DAY + 10.2 * H, voc: null, nox: null, test: true, dismissedAt: today - 5 * DAY + 10.22 * H },

@@ -1044,6 +1044,492 @@ th.right {
   line-height: 1;
 }
 
+/* ── Campus map (cover) ──────────────────────────────────────────────────── */
+.campus-map {
+  position: relative;
+  height: clamp(420px, 60vh, 640px);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card);
+}
+.campus-map-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0; /* keeps Leaflet's layers (z up to 1000) under the card and legend */
+  font-family: var(--font);
+}
+.campus-map-overlay {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(310px, calc(100% - 32px));
+  z-index: 500;
+}
+.map-card {
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(8px);
+  border-radius: 16px;
+  padding: 9px 14px;
+  box-shadow: var(--shadow);
+}
+.map-card .top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.map-card .figure {
+  margin-left: auto;
+  font-size: 18px;
+  font-weight: 800;
+}
+.map-card .figure small {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.map-card .pill {
+  font-size: 10px;
+  padding: 2px 8px;
+}
+.map-card .bar {
+  height: 5px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  margin: 7px 0 6px;
+  overflow: hidden;
+}
+.map-card .bar div {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--brand);
+}
+.map-card .bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* The campus name over the map's own (small) label: big, with a soft white halo. */
+.campus-name {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  pointer-events: none;
+  font-size: 26px;
+  font-weight: 800;
+  font-style: italic;
+  letter-spacing: -0.01em;
+  color: #166534;
+  text-shadow:
+    0 0 3px #fff,
+    0 0 6px #fff,
+    0 0 10px rgba(255, 255, 255, 0.9),
+    0 0 18px rgba(255, 255, 255, 0.8);
+}
+.campus-map-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 500;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  font-size: 11px;
+  color: var(--muted);
+}
+.campus-map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pin-wrap {
+  background: none;
+  border: 0;
+}
+/*
+ * A pin is a 0 × 0 point exactly on the faculty: the dot is centred on it and the label is placed
+ * around it by layoutLabels() (left / top set in px), with a thin line when it sits further out.
+ */
+.pin {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  cursor: pointer;
+}
+.pin .pin-dot {
+  position: absolute;
+  left: -7px;
+  top: -7px;
+}
+.pin .pin-label {
+  position: absolute;
+  left: 11px;
+  top: -11px;
+  white-space: nowrap;
+}
+.pin-line {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: #374151;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85); /* stands out on any map colour */
+  transform-origin: 0 50%;
+  pointer-events: none;
+}
+/* The live faculty is the main focus: a bigger label with a green edge. */
+.pin-live .pin-label {
+  font-size: 12px;
+  padding: 4px 10px;
+  box-shadow: 0 0 0 1.5px #16a34a, 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.pin-onboarding .pin-label {
+  font-size: 10.5px;
+}
+.pin-live-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pin-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 3px solid #9ca3af;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  display: inline-block;
+  font-style: normal;
+}
+.pin-live .pin-dot,
+.pin-dot.pin-live {
+  border-color: #16a34a;
+  background: #dcfce7;
+}
+.pin-onboarding .pin-dot,
+.pin-dot.pin-onboarding {
+  border-color: #4f46e5;
+  background: #e0e7ff;
+}
+.pin-live .pin-dot {
+  animation: pin-pulse 1.8s ease-out infinite;
+}
+@keyframes pin-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(22, 163, 74, 0);
+  }
+}
+.pin-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: #fff;
+  color: #09090b;
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: transform 0.12s;
+}
+.pin:hover .pin-label {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+}
+.pin-ghost {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #b91c1c;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  font-style: normal;
+}
+
+/* ── CCTV previews (home account) ────────────────────────────────────────── */
+.cctv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.cctv {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #0b0f14;
+  color: #fff;
+  text-align: left;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.cctv:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+.cctv-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition: filter 0.6s;
+}
+.cctv-photo {
+  object-fit: cover;
+  /* Camera feel: a touch washed out and soft. */
+  filter: saturate(0.85) contrast(1.05);
+}
+/* Lights off: grey night vision. */
+.cctv-night,
+.cctv-photo.cctv-night {
+  filter: grayscale(1) brightness(0.55) contrast(1.25);
+}
+.cctv-scene {
+  animation: cctv-flicker 4s steps(1) infinite;
+}
+@keyframes cctv-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  47% {
+    opacity: 0.96;
+  }
+  48% {
+    opacity: 1;
+  }
+  83% {
+    opacity: 0.97;
+  }
+  84% {
+    opacity: 1;
+  }
+}
+.cctv-grain,
+.cctv-band,
+.cctv-scanline,
+.cctv-vignette {
+  position: absolute;
+  pointer-events: none;
+}
+/* Film grain that jumps around a little every frame. */
+.cctv-grain {
+  inset: -20%;
+  opacity: 0.14;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  animation: cctv-grain 0.5s steps(4) infinite;
+}
+@keyframes cctv-grain {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(-4%, 3%);
+  }
+  50% {
+    transform: translate(3%, -5%);
+  }
+  75% {
+    transform: translate(-2%, 4%);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+/* A soft lighter band rolling slowly down the picture. */
+.cctv-band {
+  left: 0;
+  right: 0;
+  height: 22%;
+  top: -22%;
+  background: linear-gradient(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0));
+  animation: cctv-roll 6s linear infinite;
+}
+/* The thin bright line sweeping down the frame. */
+.cctv-scanline {
+  left: 0;
+  right: 0;
+  height: 2px;
+  top: 0;
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.35);
+  animation: cctv-roll 3.2s linear infinite;
+}
+@keyframes cctv-roll {
+  from {
+    transform: translateY(0);
+    top: -22%;
+  }
+  to {
+    top: 100%;
+  }
+}
+/* Fine horizontal video lines and darker corners. */
+.cctv-vignette {
+  inset: 0;
+  background:
+    repeating-linear-gradient(rgba(0, 0, 0, 0.07) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.45) 100%);
+}
+.cctv-cam {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-weight: 700;
+  font-size: 10px;
+  opacity: 0.85;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.cctv-top,
+.cctv-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  z-index: 1;
+}
+.cctv-top {
+  top: 0;
+  background: linear-gradient(rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+.cctv-bottom {
+  bottom: 0;
+  background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.55));
+}
+.cctv-top b {
+  font-size: 12px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.cctv-time {
+  margin-left: auto;
+  opacity: 0.9;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.cctv-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  font-weight: 800;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.cctv-live i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: pulse-dot 1.2s ease-in-out infinite alternate;
+}
+@keyframes pulse-dot {
+  to {
+    opacity: 0.3;
+  }
+}
+.cctv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  font-weight: 700;
+}
+.cctv-chip .ms {
+  font-size: 14px;
+}
+.cctv-armed {
+  margin-left: auto;
+  background: rgba(185, 28, 28, 0.85);
+}
+.cctv-offline {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  background: rgba(11, 15, 20, 0.85);
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 1;
+}
+.cctv-large .cctv-top,
+.cctv-large .cctv-bottom {
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+/* ── Account menu ────────────────────────────────────────────────────────── */
+.account-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.account-btn:hover {
+  background: var(--hover);
+}
+.avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  flex: none;
+}
+.avatar.home {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+.menu.account-menu {
+  left: auto;
+  right: 0;
+  min-width: 280px;
+}
+
 /* ── Menus ───────────────────────────────────────────────────────────────── */
 .menu-wrap {
   position: relative;

@@ -120,15 +120,15 @@ export function ActionSchedule({ live, limit }: { live: FacultyLive; limit?: num
                 </div>
                 {a.status === 'done' ? (
                   <Pill tone="good" icon="check_circle">
-                    Done
+                    <span className="hide-sm">Done</span>
                   </Pill>
                 ) : a.status === 'pending' ? (
                   <Pill tone="neutral" icon="schedule">
-                    Pending
+                    <span className="hide-sm">Pending</span>
                   </Pill>
                 ) : (
                   <Pill tone="neutral" icon="remove">
-                    No action
+                    <span className="hide-sm">No action</span>
                   </Pill>
                 )}
               </div>

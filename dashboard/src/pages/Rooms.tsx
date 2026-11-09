@@ -54,14 +54,14 @@ export function Rooms({ fac }: { fac: FacultyDef }) {
             <thead>
               <tr>
                 <th>Room</th>
-                <th>Type</th>
+                <th className="hide-sm">Type</th>
                 <th className="right">People</th>
-                <th className="right">Temp</th>
-                <th>AC</th>
+                <th className="right hide-sm">Temp</th>
+                <th className="hide-sm">AC</th>
                 <th>Lights</th>
-                <th>Fan</th>
-                <th>Auto-off</th>
-                <th className="right">Wasted today</th>
+                <th className="hide-sm">Fan</th>
+                <th className="hide-sm">Auto-off</th>
+                <th className="right hide-sm">Wasted today</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -71,16 +71,16 @@ export function Rooms({ fac }: { fac: FacultyDef }) {
                 return (
                   <tr key={r.def.code} className="clickable" onClick={() => setRoom(r.def.code)}>
                     <td>
-                      <b>{r.def.code}</b> <span className="muted">{r.def.name}</span>
+                      <b>{r.def.code}</b> <span className="muted hide-sm">{r.def.name}</span>
                     </td>
-                    <td className="muted">{r.def.type}</td>
+                    <td className="muted hide-sm">{r.def.type}</td>
                     <td className="right num">{online ? `${r.headcount}/${r.def.capacity}` : '—'}</td>
-                    <td className="right num">{online ? `${r.tempC.toFixed(1)}°C` : '—'}</td>
-                    <td>{onOff(r.acOn, online, 'ac')}</td>
+                    <td className="right num hide-sm">{online ? `${r.tempC.toFixed(1)}°C` : '—'}</td>
+                    <td className="hide-sm">{onOff(r.acOn, online, 'ac')}</td>
                     <td>{onOff(r.lightsOn, online, 'bulb')}</td>
-                    <td>{r.def.fans ? onOff(r.fanOn, online, 'fan') : <span className="faint">n/a</span>}</td>
-                    <td>{r.def.autoOff ? <Pill tone="good" icon="eco">ON</Pill> : <span className="faint">Off</span>}</td>
-                    <td className="right num">{r.def.instrumented ? energy(r.wastedTodayKWh) : '—'}</td>
+                    <td className="hide-sm">{r.def.fans ? onOff(r.fanOn, online, 'fan') : <span className="faint">n/a</span>}</td>
+                    <td className="hide-sm">{r.def.autoOff ? <Pill tone="good" icon="eco">ON</Pill> : <span className="faint">Off</span>}</td>
+                    <td className="right num hide-sm">{r.def.instrumented ? energy(r.wastedTodayKWh) : '—'}</td>
                     <td>
                       <StatusPill status={r.status} />
                     </td>

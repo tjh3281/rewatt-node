@@ -78,7 +78,7 @@ export function Safety({ fac }: { fac: FacultyDef }) {
                   return (
                     <tr key={r.def.code} className="clickable" onClick={() => setRoom(r.def.code)}>
                       <td>
-                        <b>{r.def.code}</b> <span className="muted">{r.def.name}</span>
+                        <b>{r.def.code}</b> <span className="muted hide-sm">{r.def.name}</span>
                       </td>
                       <td className="right num">{r.voc}</td>
                       <td className="right num">{r.nox}</td>
@@ -144,8 +144,8 @@ export function Safety({ fac }: { fac: FacultyDef }) {
                 <th>When</th>
                 <th>Room</th>
                 <th>Result</th>
-                <th>What happened</th>
-                <th className="right">Length</th>
+                <th className="hide-sm">What happened</th>
+                <th className="right hide-sm">Length</th>
               </tr>
             </thead>
             <tbody>
@@ -158,14 +158,14 @@ export function Safety({ fac }: { fac: FacultyDef }) {
                   <td>
                     <Pill tone={RESULT[e.result].tone} icon={RESULT[e.result].icon}>
                       {RESULT[e.result].label}
-                      {e.bestScore != null ? ` · ${e.bestScore.toFixed(2)}` : ''}
+                      {e.bestScore != null && <span className="hide-sm">{` · ${e.bestScore.toFixed(2)}`}</span>}
                     </Pill>
                   </td>
-                  <td className="muted">
+                  <td className="muted hide-sm">
                     {RESULT[e.result].what}
                     {e.dismissedAt ? ` · dismissed ${clock(e.dismissedAt)}` : ''}
                   </td>
-                  <td className="right num">{duration(e.end - e.start)}</td>
+                  <td className="right num hide-sm">{duration(e.end - e.start)}</td>
                 </tr>
               ))}
               {!sec.length && (

@@ -1271,6 +1271,58 @@ th.right {
   font-style: normal;
 }
 
+/* Tapped pin: a dark ring on its label, a bigger dot. */
+.pin-selected .pin-label {
+  box-shadow: 0 0 0 2px var(--ink), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.pin-selected .pin-dot {
+  transform: scale(1.25);
+}
+/* The tapped faculty's details: a panel on the map's right, a bottom sheet on a phone. */
+.campus-map-detail {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(330px, calc(100% - 24px));
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+.fac-detail {
+  pointer-events: auto;
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: detail-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.fac-detail .kv > div {
+  background: var(--surface-2);
+}
+.fac-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.fac-detail-head h3 {
+  font-size: 20px;
+  font-weight: 800;
+}
+@keyframes detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 /* ── CCTV previews (home account) ────────────────────────────────────────── */
 .cctv-grid {
   display: grid;
@@ -1688,8 +1740,9 @@ th.right {
     height: 32px;
     border-radius: 9px;
   }
-  .topbar .hide-sm {
-    display: none;
+  /* Less important bits (extra table columns, long labels) give way on a phone. */
+  .hide-sm {
+    display: none !important;
   }
   .content {
     padding: 16px 16px 110px;
@@ -1764,9 +1817,42 @@ th.right {
   }
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  /* An odd last tile takes the whole row instead of sitting alone. */
+  .kpis > :last-child:nth-child(odd) {
+    grid-column: span 2;
+  }
+  .kpi {
+    padding: 14px;
   }
   .kpi-value {
-    font-size: 24px;
+    font-size: clamp(18px, 5.6vw, 24px);
+    white-space: nowrap;
+  }
+  th,
+  td {
+    padding: 10px 8px;
+  }
+  /* List rows keep their title on one line. */
+  .row .title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* The tapped faculty's details: a bottom sheet over the map. */
+  .campus-map-detail {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 82%;
+    justify-content: flex-end;
+  }
+  .fac-detail {
+    padding: 14px;
+    gap: 10px;
   }
   .hero-figure {
     font-size: 44px;

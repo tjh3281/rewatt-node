@@ -54,12 +54,12 @@ export function Nodes({ fac }: { fac: FacultyDef }) {
             <thead>
               <tr>
                 <th>Node</th>
-                <th>Room</th>
-                <th>Handset</th>
+                <th className="hide-sm">Room</th>
+                <th className="hide-sm">Handset</th>
                 <th>Last sync</th>
-                <th className="right">Headcount</th>
-                <th className="right">Battery</th>
-                <th>Module</th>
+                <th className="right hide-sm">Headcount</th>
+                <th className="right hide-sm">Battery</th>
+                <th className="hide-sm">Module</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -69,14 +69,14 @@ export function Nodes({ fac }: { fac: FacultyDef }) {
                   <td>
                     <b>{n.id}</b>
                   </td>
-                  <td>{n.roomCode}</td>
-                  <td className="muted">
+                  <td className="hide-sm">{n.roomCode}</td>
+                  <td className="muted hide-sm">
                     {n.handset} · {n.android}
                   </td>
                   <td className="num">{ago(live.now - n.lastSync)}</td>
-                  <td className="right num">{n.status === 'offline' ? '—' : `${n.inferenceMs} ms`}</td>
-                  <td className="right num">{n.status === 'offline' ? '—' : `${n.batteryPct}%`}</td>
-                  <td>{n.moduleConnected ? <Pill tone="good" icon="usb">USB</Pill> : <Pill tone="warn" icon="usb_off">Unplugged</Pill>}</td>
+                  <td className="right num hide-sm">{n.status === 'offline' ? '—' : `${n.inferenceMs} ms`}</td>
+                  <td className="right num hide-sm">{n.status === 'offline' ? '—' : `${n.batteryPct}%`}</td>
+                  <td className="hide-sm">{n.moduleConnected ? <Pill tone="good" icon="usb">USB</Pill> : <Pill tone="warn" icon="usb_off">Unplugged</Pill>}</td>
                   <td>
                     <Pill tone={STATUS[n.status].tone} icon={STATUS[n.status].icon}>
                       {STATUS[n.status].label}

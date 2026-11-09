@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../data/store';
-import { facultyLive, savedToDate } from '../data/metrics';
+import { actionSchedule, facultyLive, savedToDate, type FacultyLive } from '../data/metrics';
+import type { FacultyDef } from '../data/types';
 import { CAMPUS, FACULTIES, FACULTY_LOCATIONS, facultyById } from '../data/um';
-import { energy, num, pct, rm, rmShort } from '../lib/format';
+import { clock, energy, num, pct, rm, rmShort } from '../lib/format';
 import { CampusMap, type MapPin } from '../components/CampusMap';
 import { HBars } from '../components/charts';
 import { ROLLOUT } from '../components/Shell';
@@ -34,6 +35,9 @@ export function Campus() {
   const law = measured.find((m) => m.fac.rollout === 'live');
   const lawReduction = law?.reduction ?? 0;
 
+  const [selected, setSelected] = useState<string | null>(null);
+  const pick = measured.find((m) => m.fac.id === selected);
+
   const pins: MapPin[] = FACULTIES.filter((f) => FACULTY_LOCATIONS[f.id]).map((f) => ({
     id: f.id,
     label: f.short,
@@ -50,6 +54,9 @@ export function Campus() {
 
       <CampusMap
         pins={pins}
+        selected={selected}
+        onSelect={setSelected}
+        detail={pick && <FacultyDetail item={pick} annualWaste={annualWaste(pick.fac.id)} tariff={settings.tariff} onClose={() => setSelected(null)} />}
         overlay={
           <div className="map-card">
             <div className="top">
@@ -189,5 +196,106 @@ export function Campus() {
         />
       </Card>
     </>
+  );
+}
+
+interface Measured {
+  fac: FacultyDef;
+  live: FacultyLive;
+  saved: { avoidedKWh: number };
+  reduction: number;
+}
+
+/** The card shown on the map for the tapped faculty pin: what's happening there now, and where to go next. */
+function FacultyDetail({ item, annualWaste, tariff, onClose }: { item: Measured; annualWaste: number; tariff: number; onClose: () => void }) {
+  const { settings } = useStore();
+  const { fac, live, saved } = item;
+  const nodes = fac.rooms.filter((r) => r.instrumented).length;
+  const occupied = live.rooms.filter((r) => r.status === 'occupied').length;
+  const next = actionSchedule(fac, live.now, settings).find((a) => a.status === 'pending');
+  const wastedToday = live.today.wastedKWh;
+  return (
+    <div className="fac-detail" role="dialog" aria-label={fac.name}>
+      <div className="fac-detail-head">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <h3>{fac.short}</h3>
+            <Pill tone={ROLLOUT[fac.rollout].tone} dot={fac.rollout === 'live'}>
+              {ROLLOUT[fac.rollout].label}
+            </Pill>
+          </div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            {fac.name}
+          </div>
+        </div>
+        <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <Icon name="close" />
+        </button>
+      </div>
+
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+          <span className="muted">Rooms with a node</span>
+          <b>
+            {nodes} / {fac.spaces}
+          </b>
+        </div>
+        <Meter value={nodes / fac.spaces} color="var(--good)" />
+      </div>
+
+      <div className="kv">
+        <div>
+          <small>People now</small>
+          <b>{live.occupants}</b>
+          <div className="muted" style={{ fontSize: 11 }}>
+            in {occupied} {occupied === 1 ? 'room' : 'rooms'}
+          </div>
+        </div>
+        <div>
+          <small>Ghost rooms</small>
+          <b style={{ color: live.ghosts.length ? 'var(--danger)' : undefined }}>{live.ghosts.length}</b>
+          <div className="muted" style={{ fontSize: 11 }}>
+            {live.ghosts.length ? live.ghosts.map((g) => g.room.def.code).slice(0, 3).join(', ') : 'All clear'}
+          </div>
+        </div>
+        <div>
+          <small>Wasted today</small>
+          <b>{energy(wastedToday)}</b>
+          <div className="muted" style={{ fontSize: 11 }}>
+            {rm(wastedToday * tariff)}
+          </div>
+        </div>
+        <div>
+          <small>Saved to date</small>
+          <b>{rmShort(saved.avoidedKWh * tariff)}</b>
+          <div className="muted" style={{ fontSize: 11 }}>
+            {energy(saved.avoidedKWh)}
+          </div>
+        </div>
+      </div>
+
+      <div className="muted" style={{ fontSize: 12 }}>
+        Waste rate {pct(fac.auditWasteRate)} · {rmShort(annualWaste)} a year
+        {next && (
+          <>
+            <br />
+            Next: <b style={{ color: 'var(--ink)' }}>{clock(next.at)}</b> {next.roomCode} · {next.label}
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Link to={`/${fac.id}`} className="btn primary small" style={{ flex: 1 }}>
+          <Icon name="dashboard" />
+          Open {fac.short}
+        </Link>
+        <Link to={`/${fac.id}/rooms`} className="btn small">
+          Rooms
+        </Link>
+        <Link to={`/${fac.id}/ghost-rooms`} className="btn small">
+          Ghost rooms
+        </Link>
+      </div>
+    </div>
   );
 }

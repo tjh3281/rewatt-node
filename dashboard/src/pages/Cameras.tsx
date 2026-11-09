@@ -23,7 +23,7 @@ export function Cameras({ fac }: { fac: FacultyDef }) {
           </Pill>
         }
       />
-      <div className="cctv-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))' }}>
+      <div className="cctv-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(380px, 100%), 1fr))' }}>
         {cams.map((r, i) => (
           <CctvTile key={r.def.code} room={r} now={live.now} index={i} large onOpen={() => setRoom(r.def.code)} />
         ))}

@@ -104,11 +104,26 @@ function layoutLabels(entries: { pin: MapPin; el: HTMLElement }[], container: HT
 
 /**
  * The UM campus on an OpenStreetMap map, with a pin per faculty: its name and node count, plus a red
- * badge with the ghost rooms right now. Tapping a pin opens the faculty. [overlay] floats over the
- * top of the map (the campus summary card).
+ * badge with the ghost rooms right now. Tapping a pin selects it ([onSelect]) and highlights it; the
+ * page shows its [detail] card over the map (side panel, or a bottom sheet on a phone). Tapping the
+ * map clears it. [overlay] floats over the top of the map (the campus summary card).
  */
-export function CampusMap({ pins, overlay }: { pins: MapPin[]; overlay?: ReactNode }) {
+export function CampusMap({
+  pins,
+  overlay,
+  selected,
+  onSelect,
+  detail,
+}: {
+  pins: MapPin[];
+  overlay?: ReactNode;
+  selected?: string | null;
+  onSelect?: (id: string | null) => void;
+  detail?: ReactNode;
+}) {
   const box = useRef<HTMLDivElement>(null);
+  const select = useRef(onSelect);
+  select.current = onSelect;
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
   const entries = useRef<{ pin: MapPin; el: HTMLElement }[]>([]);
@@ -140,6 +155,7 @@ export function CampusMap({ pins, overlay }: { pins: MapPin[]; overlay?: ReactNo
     campusName.current = name.getElement()?.querySelector('.campus-name') as HTMLElement | null;
     layer.current = L.layerGroup().addTo(m);
     map.current = m;
+    m.on('click', () => select.current?.(null)); // tapping the map (not a pin) closes the details
     const relayout = () => layoutLabels(entries.current, box.current, obstacles());
     m.on('zoomend', relayout);
     const resize = new ResizeObserver(() => {
@@ -178,7 +194,12 @@ export function CampusMap({ pins, overlay }: { pins: MapPin[]; overlay?: ReactNo
         keyboard: true,
         zIndexOffset: p.rollout === 'live' ? 1000 : 0,
       })
-        .on('click', () => navigate(`/${p.id}`))
+        // With a details card: select the pin. Without one: open the faculty straight away.
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          if (select.current) select.current(p.id);
+          else navigate(`/${p.id}`);
+        })
         .addTo(group);
       const el = marker.getElement()?.querySelector('.pin') as HTMLElement | null;
       if (el) added.push({ pin: p, el });
@@ -198,10 +219,16 @@ export function CampusMap({ pins, overlay }: { pins: MapPin[]; overlay?: ReactNo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 
+  // Highlight the selected pin.
+  useEffect(() => {
+    for (const { pin, el } of entries.current) el.classList.toggle('pin-selected', pin.id === selected);
+  }, [selected, signature]);
+
   return (
     <section className="campus-map" ref={section}>
       <div ref={box} className="campus-map-canvas" aria-label="Map of Universiti Malaya with ReWatt nodes" />
       {overlay && <div className="campus-map-overlay">{overlay}</div>}
+      {detail && <div className="campus-map-detail">{detail}</div>}
       <div className="campus-map-legend">
         <span>
           <i className="pin-dot pin-live" /> Live

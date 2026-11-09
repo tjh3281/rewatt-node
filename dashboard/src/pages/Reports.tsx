@@ -183,7 +183,7 @@ export function Reports({ fac }: { fac: FacultyDef }) {
               <thead>
                 <tr>
                   <th>Type</th>
-                  <th className="right">Rooms</th>
+                  <th className="right hide-sm">Rooms</th>
                   <th className="right">Wasted</th>
                   <th className="right">Cost</th>
                   <th className="right">Share</th>
@@ -195,7 +195,7 @@ export function Reports({ fac }: { fac: FacultyDef }) {
                   .map(([t, v]) => (
                     <tr key={t}>
                       <td>{t}</td>
-                      <td className="right num">{typeRooms(t)}</td>
+                      <td className="right num hide-sm">{typeRooms(t)}</td>
                       <td className="right num">{energy(v)}</td>
                       <td className="right num">{rm(v * settings.tariff)}</td>
                       <td className="right num">{pct(f.weekWaste ? v / f.weekWaste : 0, 0)}</td>

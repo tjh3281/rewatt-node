@@ -234,7 +234,7 @@ function AccountMenu() {
 
   return (
     <div className="menu-wrap" ref={ref}>
-      <button className="account-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu">
+      <button className="account-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" aria-label={`${me.name} account`}>
         <span className={`avatar ${account}`}>{me.initials}</span>
         <span className="hide-sm">{me.name}</span>
         <Icon name="expand_more" />

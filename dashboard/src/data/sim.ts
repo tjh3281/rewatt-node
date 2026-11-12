@@ -182,7 +182,7 @@ export function simRoomDay(fac: FacultyDef, def: RoomDef, day: number, settings:
     const close = day + t.closeHour * H;
     const naturalEnd = Math.min(s.end + natural, next ? next.start : Infinity, Math.max(close, s.end + 30 * M));
     const ep: Episode = { roomCode: def.code, start: s.end, naturalEnd, end: naturalEnd, systems: sys, alertAt: s.end + settings.graceMin * M };
-    if (def.autoOff && sys.lights) ep.autoOffAt = s.end + 15 * S; // app: 10 s empty + 5 s countdown
+    if (def.autoOff && sys.lights) ep.autoOffAt = s.end + 10 * S; // app: 5 s empty + 5 s countdown
     // Lights alone, switched off by Auto-off: over before any alert.
     if (!sys.ac && !sys.fan && ep.autoOffAt != null) {
       ep.end = Math.min(naturalEnd, ep.autoOffAt);

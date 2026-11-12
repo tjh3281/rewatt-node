@@ -37,6 +37,7 @@ class IntrusionAlertActivity : ComponentActivity() {
                     if (!fire.active) finish()
                 }
                 AlarmFullScreen(
+                    kind = AlarmKind.FIRE,
                     heading = stringResource(R.string.fire_alert_heading),
                     message = stringResource(R.string.fire_alert_text, roomId),
                     photoPath = null,
@@ -62,6 +63,7 @@ class IntrusionAlertActivity : ComponentActivity() {
                 if (!state.alarmActive) finish()
             }
             AlarmFullScreen(
+                kind = AlarmKind.INTRUDER,
                 heading = stringResource(R.string.cctv_alert_heading),
                 message = stringResource(R.string.cctv_alert_text, roomId),
                 photoPath = photoPath,

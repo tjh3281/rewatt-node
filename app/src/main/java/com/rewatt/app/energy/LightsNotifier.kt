@@ -30,7 +30,8 @@ class LightsNotifier(context: Context) {
             },
         )
         val reason = when (change.reason) {
-            LightsChange.Reason.CAMERA -> if (change.on) R.string.lights_reason_camera_on else R.string.lights_reason_camera_off
+            LightsChange.Reason.CAMERA, LightsChange.Reason.PLUG ->
+                if (change.on) R.string.lights_reason_camera_on else R.string.lights_reason_camera_off
             LightsChange.Reason.AUTO_OFF -> R.string.lights_reason_auto_off
             LightsChange.Reason.SCHEDULE -> if (change.on) R.string.lights_reason_schedule_on else R.string.lights_reason_schedule_off
             LightsChange.Reason.MANUAL -> if (change.on) R.string.lights_reason_manual_on else R.string.lights_reason_manual_off

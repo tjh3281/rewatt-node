@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Tapo smart plug only speaks plain HTTP on the local Wi-Fi, at an IP the hotspot hands out (no
+  fixed host name to list), so plain HTTP is allowed. Its requests are encrypted by Tapo's own
+  protocol, and every internet service the app calls uses https:// URLs.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

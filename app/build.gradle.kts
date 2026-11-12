@@ -44,6 +44,15 @@ android {
             ?: System.getenv("MAPS_WEATHER_API_KEY")
             ?: ""
         buildConfigField("String", "MAPS_WEATHER_API_KEY", mapsWeatherApiKey.asBuildConfigString())
+
+        // Default Tapo login for the Room 1 smart plug (local.properties only; Settings can change it).
+        for (key in listOf("TAPO_EMAIL", "TAPO_PASSWORD")) {
+            val value = localProperties.getProperty(key)
+                ?: providers.gradleProperty(key).orNull
+                ?: System.getenv(key)
+                ?: ""
+            buildConfigField("String", key, value.asBuildConfigString())
+        }
     }
 
     buildTypes {

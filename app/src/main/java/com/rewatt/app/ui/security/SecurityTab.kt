@@ -614,6 +614,7 @@ private fun CompactEventRow(event: SecurityEvent, onClick: () -> Unit) {
                 fontSize = 12.sp,
                 color = Ink,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 resultLabel(event.result),

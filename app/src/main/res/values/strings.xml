@@ -269,6 +269,10 @@
     <string name="cctv_alert_reason_score">Face not recognised · best FAMILY match %1$s</string>
     <string name="cctv_dismiss">Dismiss</string>
     <string name="alarm_started">Started %1$s · ringing %2$s</string>
+    <string name="alarm_active">ALARM ACTIVE</string>
+    <string name="alarm_started_label">STARTED</string>
+    <string name="alarm_ringing_label">RINGING</string>
+    <string name="alarm_captured">CAPTURED</string>
     <string name="cctv_resume_title">CCTV paused</string>
     <string name="cctv_resume_text">Open ReWatt to resume the security camera.</string>
     <string name="cctv_deterrent_speech">You are being recorded</string>

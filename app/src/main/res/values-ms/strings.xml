@@ -268,6 +268,10 @@
     <string name="cctv_alert_reason">Wajah tidak dikenali (tidak diketahui atau bertopeng)</string>
     <string name="cctv_alert_reason_score">Wajah tidak dikenali · padanan FAMILY terbaik %1$s</string>
     <string name="cctv_dismiss">Tutup</string>
+    <string name="alarm_active">PENGGERA AKTIF</string>
+    <string name="alarm_started_label">BERMULA</string>
+    <string name="alarm_ringing_label">BERBUNYI</string>
+    <string name="alarm_captured">DIRAKAM</string>
     <string name="alarm_started">Bermula %1$s · berbunyi %2$s</string>
     <string name="cctv_resume_title">CCTV dijeda</string>
     <string name="cctv_resume_text">Buka ReWatt untuk menyambung kamera keselamatan.</string>

@@ -30,6 +30,7 @@ import com.rewatt.app.ui.sensor.SecurityTabParts
 import com.rewatt.app.ui.sensor.SensorScreen
 import com.rewatt.app.ui.sensor.SensorViewModel
 import com.rewatt.app.ui.sensor.SensorViewModelFactory
+import com.rewatt.app.ui.sensor.SmartPlugSettingsSection
 import com.rewatt.app.ui.theme.ReWattTheme
 import com.rewatt.app.usb.UsbSentinelService
 
@@ -156,6 +157,7 @@ class MainActivity : AppCompatActivity() {
                             onTestFireAlarm = { appGraph.fireMonitor.alarm.trigger(vocIndex = null, noxIndex = null, test = true) },
                         )
                     },
+                    settingsSmartPlugContent = { SmartPlugSettingsSection(appGraph.tapoLink) },
                 )
 
                 // Fire / intruder alarm: in-app full-screen page on top of everything (no extra

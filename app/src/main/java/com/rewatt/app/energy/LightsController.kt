@@ -22,6 +22,9 @@ data class LightsChange(val seq: Int, val on: Boolean, val reason: Reason) {
 
         /** The user tapped the lights icon. */
         MANUAL,
+
+        /** The smart plug reported a new state (e.g. switched from the Tapo app). */
+        PLUG,
     }
 }
 
@@ -48,6 +51,8 @@ data class LightsState(
     val lastCameraReadAt: Long? = null,
     /** The last on ⇄ off change of [lightsOn] (not the first reading), for the notification. */
     val lastChange: LightsChange? = null,
+    /** The Tapo smart plug is linked: it switches the lights for real and its state is the truth. */
+    val plugLinked: Boolean = false,
 ) {
     fun countdownSecondsLeft(nowMillis: Long): Int? =
         countdownEndsAt?.let { ((it - nowMillis + 999) / 1000).toInt().coerceAtLeast(0) }
@@ -62,6 +67,8 @@ data class LightsState(
  *    reading taken [SETTLE_MS] later confirms it, or shows the light is still on (no relay yet).
  *  - After Auto-off, if the camera still sees the light on, Auto-off waits until someone is in the
  *    room or the light goes off before counting down again (no repeat every few seconds).
+ *  - While the Tapo smart plug is linked ([plugReading]), the plug switches the lights for real and
+ *    its state replaces the camera's reading.
  * Auto-off and Schedule are independent (both can be on). Every on ⇄ off change is recorded in
  * [LightsState.lastChange] for the notification. Driven by [tick] once a second.
  */
@@ -94,9 +101,15 @@ class LightsController {
 
     fun toggleFan() = mutableState.update { it.copy(fanOn = !it.fanOn) }
 
+    /**
+     * The smart plug's state, read at [readAt]; null = the plug isn't linked (the camera takes over).
+     * A reading taken before the app's last switch is stale and only keeps the link.
+     */
+    fun plugReading(on: Boolean?, readAt: Long) = mutableState.update { plugStep(it, on, readAt) }
+
     companion object {
         /** The room must stay empty this long before the lights-off countdown starts… */
-        const val EMPTY_MS = 10_000L
+        const val EMPTY_MS = 5_000L
 
         /** …which then runs this long, shown on the occupancy card. */
         const val COUNTDOWN_MS = 5_000L
@@ -111,10 +124,11 @@ class LightsController {
                 if (now >= it.atMillis) s = switched(s, it.turnOn, LightsChange.Reason.SCHEDULE, now).copy(schedule = null)
             }
 
-            // Camera: every new reading sets the lights (unless it was taken right after an app switch).
+            // Camera: every new reading sets the lights (unless it was taken right after an app switch,
+            // or the smart plug is linked and already says what the lights really are).
             if (cameraLightsOn != null && cameraReadAt != null && cameraReadAt != s.lastCameraReadAt) {
                 s = s.copy(lastCameraReadAt = cameraReadAt)
-                if (cameraReadAt >= (s.appSwitchedAt ?: Long.MIN_VALUE) + SETTLE_MS) {
+                if (!s.plugLinked && cameraReadAt >= (s.appSwitchedAt ?: Long.MIN_VALUE) + SETTLE_MS) {
                     s = withLights(s, cameraLightsOn, LightsChange.Reason.CAMERA)
                     // The camera saw the lights really off: Auto-off may count down again next time.
                     if (!cameraLightsOn) s = s.copy(autoOffSpent = false)
@@ -133,6 +147,16 @@ class LightsController {
             if (s.countdownEndsAt == null && now - since >= EMPTY_MS) s = s.copy(countdownEndsAt = now + COUNTDOWN_MS)
             val endsAt = s.countdownEndsAt
             if (endsAt != null && now >= endsAt) s = switched(s, on = false, LightsChange.Reason.AUTO_OFF, now).copy(autoOffSpent = true)
+            return s
+        }
+
+        internal fun plugStep(state: LightsState, on: Boolean?, readAt: Long): LightsState {
+            if (on == null) return if (state.plugLinked) state.copy(plugLinked = false) else state
+            var s = state.copy(plugLinked = true)
+            if (readAt < (s.appSwitchedAt ?: Long.MIN_VALUE)) return s
+            s = withLights(s, on, LightsChange.Reason.PLUG)
+            // The lights are really off: Auto-off may count down again next time.
+            if (!on) s = s.copy(autoOffSpent = false)
             return s
         }
 

@@ -49,34 +49,37 @@ class LightsControllerTest {
     }
 
     @Test
-    fun emptyTenSecondsStartsFiveSecondCountdownThenLightsOff() {
-        val beforeCountdown = run(lightsOnAutoOff, 0, 9_000, liveCount = 0, camera = true)
+    fun emptyForEmptyMsStartsTheCountdownThenLightsOff() {
+        val empty = LightsController.EMPTY_MS
+        val offAt = empty + LightsController.COUNTDOWN_MS
+        val beforeCountdown = run(lightsOnAutoOff, 0, empty - 1_000, liveCount = 0, camera = true)
         assertNull(beforeCountdown.countdownEndsAt)
         assertEquals(true, beforeCountdown.lightsOn)
 
-        val countdown = run(beforeCountdown, 10_000, 10_000, liveCount = 0, camera = true)
-        assertEquals(15_000L, countdown.countdownEndsAt)
-        assertEquals(5, countdown.countdownSecondsLeft(10_000))
-        assertEquals(1, countdown.countdownSecondsLeft(14_000))
+        val countdown = run(beforeCountdown, empty, empty, liveCount = 0, camera = true)
+        assertEquals(offAt, countdown.countdownEndsAt)
+        assertEquals((LightsController.COUNTDOWN_MS / 1_000).toInt(), countdown.countdownSecondsLeft(empty))
+        assertEquals(1, countdown.countdownSecondsLeft(offAt - 1_000))
 
-        val almost = run(countdown, 11_000, 14_000, liveCount = 0, camera = true)
+        val almost = run(countdown, empty + 1_000, offAt - 1_000, liveCount = 0, camera = true)
         assertEquals(true, almost.lightsOn)
 
-        val off = run(almost, 15_000, 15_000, liveCount = 0, camera = true)
+        val off = run(almost, offAt, offAt, liveCount = 0, camera = true)
         assertEquals(false, off.lightsOn)
         assertNull(off.countdownEndsAt)
     }
 
     @Test
     fun someoneAppearingCancelsTheCountdown() {
-        val counting = run(lightsOnAutoOff, 0, 11_000, liveCount = 0, camera = true)
-        assertEquals(15_000L, counting.countdownEndsAt)
-        val back = LightsController.step(counting, 12_000, liveCount = 1, cameraLightsOn = true, cameraReadAt = 10_000)
+        val empty = LightsController.EMPTY_MS
+        val counting = run(lightsOnAutoOff, 0, empty + 1_000, liveCount = 0, camera = true)
+        assertEquals(empty + LightsController.COUNTDOWN_MS, counting.countdownEndsAt)
+        val back = LightsController.step(counting, empty + 2_000, liveCount = 1, cameraLightsOn = true, cameraReadAt = counting.lastCameraReadAt)
         assertNull(back.countdownEndsAt)
         assertNull(back.emptySince)
         assertEquals(true, back.lightsOn)
-        // Empty again: the 10 s start over.
-        val again = run(back, 13_000, 22_000, liveCount = 0, camera = true)
+        // Empty again: the wait starts over (no countdown until EMPTY_MS have passed again).
+        val again = run(back, empty + 3_000, 2 * empty + 2_000, liveCount = 0, camera = true)
         assertNull(again.countdownEndsAt)
     }
 
@@ -173,5 +176,69 @@ class LightsControllerTest {
         // …and the schedule still switches them on later.
         c.tick(60_000, liveCount = 1, cameraLightsOn = null, cameraReadAt = null)
         assertEquals(true, c.state.value.lightsOn)
+    }
+
+    @Test
+    fun aLinkedPlugIsTheTruthAndTheCameraIsIgnored() {
+        val c = LightsController()
+        c.plugReading(true, readAt = 0)
+        assertTrue(c.state.value.plugLinked)
+        assertEquals(true, c.state.value.lightsOn)
+        // The camera thinks the room is dark: ignored while the plug is linked.
+        c.tick(10_000, liveCount = 0, cameraLightsOn = false, cameraReadAt = 10_000)
+        assertEquals(true, c.state.value.lightsOn)
+        // Switched off from the Tapo app: shows here, as a PLUG change (no notification, no command).
+        c.plugReading(false, readAt = 12_000)
+        assertEquals(false, c.state.value.lightsOn)
+        assertEquals(LightsChange.Reason.PLUG, c.state.value.lastChange?.reason)
+    }
+
+    @Test
+    fun whileThePlugIsLinkedCameraReadingsNeverChangeTheBulb() {
+        // Plug says ON; for a whole minute the camera reads the room as dark, then as bright while the
+        // plug says OFF: the bulb always shows the plug, and no camera change is ever recorded.
+        var s = LightsController.plugStep(LightsState(), true, readAt = 0)
+        s = run(s, 0, 60_000, liveCount = 1, camera = false)
+        assertEquals(true, s.lightsOn)
+        s = LightsController.plugStep(s, false, readAt = 61_000)
+        s = run(s, 61_000, 120_000, liveCount = 1, camera = true)
+        assertEquals(false, s.lightsOn)
+        assertTrue(s.lastChange?.reason != LightsChange.Reason.CAMERA)
+    }
+
+    @Test
+    fun aPlugReadingFromBeforeTheAppSwitchedIsStale() {
+        val c = LightsController()
+        c.plugReading(false, readAt = 0)
+        c.switchLights(true, nowMillis = 5_000)
+        // Read while the switch was still on its way: keeps the app's switch.
+        c.plugReading(false, readAt = 4_900)
+        assertEquals(true, c.state.value.lightsOn)
+        assertEquals(LightsChange.Reason.MANUAL, c.state.value.lastChange?.reason)
+        // Read after: the plug is the truth (here the switch didn't take).
+        c.plugReading(false, readAt = 8_000)
+        assertEquals(false, c.state.value.lightsOn)
+    }
+
+    @Test
+    fun whenThePlugUnlinksTheCameraTakesOverAgain() {
+        val c = LightsController()
+        c.plugReading(true, readAt = 0)
+        c.plugReading(null, readAt = 3_000)
+        assertFalse(c.state.value.plugLinked)
+        c.tick(10_000, liveCount = 0, cameraLightsOn = false, cameraReadAt = 10_000)
+        assertEquals(false, c.state.value.lightsOn)
+    }
+
+    @Test
+    fun autoOffWithThePlugCountsDownAgainAfterThePlugReportsOff() {
+        val offAt = LightsController.EMPTY_MS + LightsController.COUNTDOWN_MS
+        var s = LightsController.plugStep(lightsOnAutoOff, true, readAt = 0)
+        s = run(s, 0, offAt, liveCount = 0, camera = null)
+        assertEquals(false, s.lightsOn)
+        assertEquals(LightsChange.Reason.AUTO_OFF, s.lastChange?.reason)
+        assertTrue(s.autoOffSpent)
+        s = LightsController.plugStep(s, false, readAt = offAt + 1_000)
+        assertFalse(s.autoOffSpent)
     }
 }

@@ -83,7 +83,7 @@ export interface Episode {
   /** When they actually went off (ReWatt alert actioned, Auto-off, or naturalEnd). */
   end: number;
   systems: Record<System, boolean>;
-  /** Lights only: switched off by the app's Auto-off (10 s empty + 5 s countdown). */
+  /** Lights only: switched off by the app's Auto-off (5 s empty + 5 s countdown). */
   autoOffAt?: number;
   alertAt: number;
   ackAt?: number;

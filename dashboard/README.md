@@ -43,7 +43,7 @@ All figures are simulated. They are not measured.
 
 The rules below are the ReWatt app's own:
 
-- lights Auto-off: 10 s empty, then a 5 s countdown
+- lights Auto-off: 5 s empty, then a 5 s countdown
 - lights on at EV ≥ 2
 - fire at VOC ≥ 130 or NOx ≥ 5, two readings in a row
 

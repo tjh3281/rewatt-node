@@ -166,7 +166,7 @@ export function Reports({ fac }: { fac: FacultyDef }) {
             />
           </div>
           <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-            Lighting waste stays low in rooms with the app's Auto-off: lights go off {10 + 5} s after the room empties.
+            Lighting waste stays low in rooms with the app's Auto-off: lights go off {5 + 5} s after the room empties.
           </p>
         </Card>
         <Card title="Peak wastage hours" subtitle={`kWh wasted per hour of day · last 7 days · ${pct(top3 / totalHours, 0)} in the worst 3 hours`}>

@@ -75,15 +75,17 @@ class SensorViewModel(
     private val lightsNotifier = LightsNotifier(appContext)
 
     init {
-        // A notification only when the app switches the lights (Auto-off, Schedule, a tap). The camera
-        // seeing the lights change just updates the icon. Skips the change already there at start.
+        // A notification only when the app switches the lights for real (Auto-off, Schedule, a tap, with
+        // the smart plug linked). The camera or the plug reporting a change just updates the icon.
+        // Skips the change already there at start.
         viewModelScope.launch {
             lightsController.state
                 .map { it.lastChange }
                 .distinctUntilChanged()
                 .drop(1)
                 .filterNotNull()
-                .filter { it.reason != LightsChange.Reason.CAMERA }
+                .filter { it.reason != LightsChange.Reason.CAMERA && it.reason != LightsChange.Reason.PLUG }
+                .filter { lightsController.state.value.plugLinked }
                 .collect { lightsNotifier.notify(it, mqttRepository.roomId.ifBlank { "Room1" }) }
         }
         // Ticker loop: update time every second, step the lights (Auto-off / Schedule) and emit MQTT 1 Hz payload

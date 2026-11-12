@@ -8,6 +8,7 @@ import com.rewatt.app.data.TelemetryRepository
 import com.rewatt.app.data.WeatherRepository
 import com.rewatt.app.energy.EnergyStateHolder
 import com.rewatt.app.energy.LightsController
+import com.rewatt.app.energy.tapo.TapoLink
 import com.rewatt.app.perception.LiveHeadcount
 import com.rewatt.app.perception.LivePreviewHub
 import com.rewatt.app.perception.PerceptionStateHolder
@@ -75,6 +76,11 @@ class AppGraph(context: Context) {
     /** Room lights (live illuminance, Auto-off, Schedule) and aircond; ticked by SensorViewModel. */
     val lightsController: LightsController by lazy {
         LightsController()
+    }
+
+    /** The Tapo smart plug that switches the Room 1 lights for real (local Wi-Fi). */
+    val tapoLink: TapoLink by lazy {
+        TapoLink(appContext, lightsController)
     }
 
     // ── CCTV (security camera) ──

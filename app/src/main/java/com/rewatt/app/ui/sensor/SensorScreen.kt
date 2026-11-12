@@ -218,6 +218,8 @@ fun SensorScreen(
     securityParts: SecurityTabParts = SecurityTabParts(),
     fireAlarmState: FireAlarmState = FireAlarmState(),
     settingsSecurityContent: @Composable () -> Unit = {},
+    /** Settings: the Room 1 lights' smart plug (login / IP backup). */
+    settingsSmartPlugContent: @Composable () -> Unit = {},
     energyState: EnergyUiState = EnergyUiState(),
     onLivePreviewSurface: (Preview.SurfaceProvider, Boolean) -> Unit = { _, _ -> },
     /** Live headcount: called with each frame the camera box is showing (see [LivePreview]). */
@@ -320,6 +322,7 @@ fun SensorScreen(
                         onUpdateMqttConfig = onUpdateMqttConfig,
                         onOpenSetupGuide = onOpenSetupGuide,
                         securitySettingsContent = settingsSecurityContent,
+                        smartPlugContent = settingsSmartPlugContent,
                         diagnosticsContent = {
                             DiagnosticsSection(
                                 uiState = uiState,
@@ -998,8 +1001,8 @@ data class SecurityTabParts(
  * stops, reloads or moves it.
  *  - Portrait: tab panel on top → camera → tab content below (SECURITY: event history; the
  *    illuminance card lives in Settings → Diagnostics).
- *  - Landscape: tab panel in a left column → camera filling the rest (ENERGY 20% / 80%; SECURITY:
- *    arm card with the event log under it, 30% / 70%).
+ *  - Landscape: tab panel in a left column (20%) → camera filling the rest (80%), the same size in
+ *    both tabs (SECURITY: arm card with the event log under it).
  */
 @Composable
 private fun CameraTabs(
@@ -1055,9 +1058,10 @@ private fun CameraTabs(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                // Both tabs: the same 20% / 80% split, so the camera is the same size in each.
                 Column(
                     modifier = Modifier
-                        .weight(if (energyTab) 0.2f else 0.3f)
+                        .weight(0.2f)
                         .fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -1113,7 +1117,7 @@ private fun CameraTabs(
                 // Same call site for both tabs → the same camera box stays alive across switches.
                 camera(
                     Modifier
-                        .weight(if (energyTab) 0.8f else 0.7f)
+                        .weight(0.8f)
                         .fillMaxHeight(),
                 )
             }
@@ -1192,7 +1196,8 @@ private fun RoomCard(
     var scheduleOpen by remember { mutableStateOf(false) }
     // The room's ceiling light sits flush with the card's top edge above the room name; when it is on
     // the whole card lights up.
-    val glow = lightGlow(lights.lightsOn)
+    // No smart plug linked: the light (and its glow) isn't shown at all; the card keeps its size.
+    val glow = lightGlow(lights.lightsOn.takeIf { lights.plugLinked })
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
@@ -1208,19 +1213,21 @@ private fun RoomCard(
                     lightBottomY = CEILING_LIGHT_DRAWN_HEIGHT,
                 ),
         ) {
-            // Tap the light to switch it.
-            CeilingLight(
-                on = lights.lightsOn,
-                glow = glow,
-                modifier = Modifier
-                    .padding(start = ROOM_CARD_START)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        role = Role.Switch,
-                        onClickLabel = if (lights.lightsOn == true) "Turn lights off" else "Turn lights on",
-                    ) { lightsController?.switchLights(lights.lightsOn != true) },
-            )
+            // Tap the light to switch it (through the smart plug).
+            if (lights.plugLinked) {
+                CeilingLight(
+                    on = lights.lightsOn,
+                    glow = glow,
+                    modifier = Modifier
+                        .padding(start = ROOM_CARD_START)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Switch,
+                            onClickLabel = if (lights.lightsOn == true) "Turn lights off" else "Turn lights on",
+                        ) { lightsController?.switchLights(lights.lightsOn != true) },
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2407,6 +2414,7 @@ private fun StitchSettingsTab(
     onUpdateMqttConfig: (String, Int, String, String, String) -> Unit,
     onOpenSetupGuide: () -> Unit,
     securitySettingsContent: @Composable () -> Unit,
+    smartPlugContent: @Composable () -> Unit,
     diagnosticsContent: @Composable () -> Unit,
 ) {
     var diagnosticsExpanded by rememberSaveable { mutableStateOf(false) }
@@ -2536,6 +2544,9 @@ private fun StitchSettingsTab(
                 }
             }
         }
+
+        // Room 1 lights: Tapo smart plug (backup login / IP)
+        smartPlugContent()
 
         // Clean Single "Quick Setup Guide" Outlined Button
         OutlinedButton(

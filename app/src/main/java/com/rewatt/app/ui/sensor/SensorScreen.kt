@@ -197,6 +197,7 @@ import com.rewatt.app.telemetry.GasLevel
 import com.rewatt.app.telemetry.GasReading
 import com.rewatt.app.telemetry.noxLevel
 import com.rewatt.app.telemetry.vocLevel
+import com.rewatt.app.telemetry.TemperatureAdjust
 import com.rewatt.app.usb.UsbConnectionStatus
 
 private enum class StitchTab(val label: String) {
@@ -1040,7 +1041,9 @@ private fun CameraTabs(
     val energyTab = tab == StitchTab.ENERGY
     val usbConnected = uiState.sensorState.connectionStatus == UsbConnectionStatus.Connected
     val telemetry = uiState.sensorState.latestTelemetry
-    val temp = telemetry?.temperatureC
+    // Shown with the Settings → Temperature Adjustment offset added.
+    val tempOffset by TemperatureAdjust.offsetC.collectAsStateWithLifecycle()
+    val temp = TemperatureAdjust.apply(telemetry?.temperatureC, tempOffset)
     val hum = telemetry?.humidityPercent
     // Module not attached: "--" (never the last reading frozen on screen).
     val tempAvailable = temp != null && usbConnected
@@ -1062,6 +1065,16 @@ private fun CameraTabs(
                 onLiveFrame = onLiveFrame,
                 nowMillis = uiState.nowMillis,
                 roomChip = uiState.roomId.ifBlank { "Room1" }.takeIf { landscape && energyTab },
+                // Portrait ENERGY: mmWave as a small chip on the preview (landscape has its own card).
+                mmWaveChip = if (!landscape && energyTab) {
+                    when {
+                        !usbConnected -> "mmWave · --" to Color(0xFF9CA3AF)
+                        ((liveCount ?: energyState.personCount) ?: 0) > 0 -> "mmWave · Detected" to Color(0xFF22C55E)
+                        else -> "mmWave · Clear" to Color(0xFF9CA3AF)
+                    }
+                } else {
+                    null
+                },
                 moduleOnline = usbConnected,
                 armed = security.armed && !energyTab,
                 securityState = securityState,
@@ -1775,6 +1788,7 @@ private fun SharedCameraBox(
     onLiveFrame: (suspend (Bitmap) -> Unit)?,
     nowMillis: Long,
     roomChip: String?,
+    mmWaveChip: Pair<String, Color>?,
     moduleOnline: Boolean,
     armed: Boolean,
     securityState: SecurityUiState,
@@ -1907,6 +1921,7 @@ private fun SharedCameraBox(
                 if (moduleOnline) Color(0xFF22C55E) else Color(0xFFF59E0B),
                 Modifier.align(Alignment.TopEnd),
             )
+            mmWaveChip != null -> CameraChip(mmWaveChip.first, mmWaveChip.second, Modifier.align(Alignment.TopEnd))
         }
 
         AnimatedVisibility(
@@ -2808,9 +2823,9 @@ private fun StitchSettingsTab(
                     verticalAlignment = Alignment.Top,
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        mqttSection()
-                        // Room 1 lights: Tapo smart plug (backup login / IP)
+                        // Room 1 lights: Tapo smart plug (backup login / IP), then MQTT
                         smartPlugContent()
+                        mqttSection()
                         guideButton()
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {

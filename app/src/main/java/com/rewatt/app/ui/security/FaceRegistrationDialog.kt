@@ -2,6 +2,7 @@ package com.rewatt.app.ui.security
 
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -129,11 +130,28 @@ fun FaceRegistrationDialog(
         val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
         val job = scope.launch {
             delay(CAMERA_HANDOFF_MS) // let the background service release the back camera
-            runCatching {
-                provider = ProcessCameraProvider.awaitInstance(context)
-                provider?.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview, imageCapture)
-            }.onFailure {
-                message = R.string.reg_error
+            // Slower phones take longer to hand the camera over: keep trying for a few seconds, the
+            // front camera first (selfie), the back one if the front can't be opened.
+            val p = runCatching { ProcessCameraProvider.awaitInstance(context) }
+                .onFailure { Log.w(TAG, "Camera provider unavailable", it) }
+                .getOrNull()
+            provider = p
+            var bound = false
+            if (p != null) {
+                attempts@ for (attempt in 1..BIND_ATTEMPTS) {
+                    for (selector in listOf(CameraSelector.DEFAULT_FRONT_CAMERA, CameraSelector.DEFAULT_BACK_CAMERA)) {
+                        if (!runCatching { p.hasCamera(selector) }.getOrDefault(false)) continue
+                        bound = runCatching {
+                            p.unbind(preview, imageCapture)
+                            p.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture)
+                        }.onFailure { Log.w(TAG, "Registration camera could not open (attempt $attempt)", it) }.isSuccess
+                        if (bound) break@attempts
+                    }
+                    delay(BIND_RETRY_MS)
+                }
+            }
+            if (!bound) {
+                message = R.string.reg_camera_error
                 messageIsError = true
             }
         }
@@ -348,4 +366,7 @@ private suspend fun ImageCapture.captureBitmap(context: android.content.Context)
     }
 
 private const val CAMERA_HANDOFF_MS = 600L
+private const val BIND_ATTEMPTS = 8
+private const val BIND_RETRY_MS = 700L
+private const val TAG = "FaceRegistration"
 private const val MAX_NAME_LENGTH = 40

@@ -186,17 +186,19 @@ class UsbSentinelService : Service(), SerialInputOutputManager.Listener {
             intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
         }
 
-        if (!granted) {
+        // Some phones don't attach the result to the callback: ask Android whether access was granted
+        // (the device itself, or any matching serial device when the callback carries no device).
+        val driver = UsbSerialProber.getDefaultProber()
+            .findAllDrivers(usbManager)
+            .firstOrNull { device == null || it.device.deviceId == device.deviceId }
+
+        if (!granted && (driver == null || !usbManager.hasPermission(driver.device))) {
             repository.setConnectionStatus(
                 status = UsbConnectionStatus.PermissionDenied,
                 message = "USB permission denied.",
             )
             return
         }
-
-        val driver = UsbSerialProber.getDefaultProber()
-            .findAllDrivers(usbManager)
-            .firstOrNull { it.device.deviceId == device?.deviceId }
 
         if (driver == null) {
             repository.setConnectionStatus(
@@ -296,12 +298,18 @@ class UsbSentinelService : Service(), SerialInputOutputManager.Listener {
         }
     }
 
+    /**
+     * Android fills in the answer (EXTRA_PERMISSION_GRANTED / EXTRA_DEVICE) on this callback, so it must
+     * be MUTABLE: an immutable one arrives without the answer and reads as "denied". It names this app's
+     * package, so only ReWatt receives it.
+     */
     private fun usbPermissionIntent(): PendingIntent =
         PendingIntent.getBroadcast(
             this,
             USB_PERMISSION_REQUEST_CODE,
             Intent(ACTION_USB_PERMISSION).setPackage(packageName),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0),
         )
 
     private fun promoteToConnectedDeviceForegroundService() {

@@ -338,6 +338,7 @@
     <string name="reg_multi">More than one face — one person at a time.</string>
     <string name="reg_small">Face too small — move closer.</string>
     <string name="reg_error">Face models failed to load.</string>
+    <string name="reg_camera_error">The camera couldn\'t start. Close other camera apps, then open this again.</string>
     <string name="reg_saved">Saved ✓</string>
     <string name="reg_all_done">This person is registered.</string>
     <string name="reg_another">Add another person</string>

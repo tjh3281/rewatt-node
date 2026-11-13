@@ -7,7 +7,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LightsControllerTest {
-    private val lightsOnAutoOff = LightsState(lightsOn = true, autoOff = true)
+    /** Auto-off ON, the bulb connected (smart plug linked) and ON: the only case Auto-off runs in. */
+    private val lightsOnAutoOff = LightsState(lightsOn = true, autoOff = true, plugLinked = true)
 
     /**
      * Runs [LightsController.step] once a second from [from] to [to] (inclusive) with the same inputs;
@@ -98,29 +99,50 @@ class LightsControllerTest {
     }
 
     @Test
-    fun autoOffDoesNotRepeatWhileTheLightIsReallyStillOn() {
-        val off = run(lightsOnAutoOff, 0, 15_000, liveCount = 0, camera = true)
-        assertEquals(false, off.lightsOn)
-        assertTrue(off.autoOffSpent)
-        // Nobody turned the light off for real: the next reading shows it on, and Auto-off waits.
-        val stillOn = run(off, 16_000, 60_000, liveCount = 0, camera = true)
-        assertEquals(true, stillOn.lightsOn)
-        assertNull(stillOn.countdownEndsAt)
-        assertEquals(LightsChange.Reason.CAMERA, stillOn.lastChange?.reason)
-        // Someone comes and goes: Auto-off counts down again.
-        val entered = run(stillOn, 61_000, 61_000, liveCount = 1, camera = true)
-        assertFalse(entered.autoOffSpent)
-        val left = run(entered, 62_000, 77_000, liveCount = 0, camera = true)
-        assertEquals(false, left.lightsOn)
-        assertEquals(LightsChange.Reason.AUTO_OFF, left.lastChange?.reason)
+    fun noBulbConnectedMeansNoCountdown() {
+        // Lights on by the camera's reading, Auto-off ON, room empty, but no smart plug linked.
+        val s = run(lightsOnAutoOff.copy(plugLinked = false), 0, 30_000, liveCount = 0, camera = true)
+        assertNull(s.countdownEndsAt)
+        assertNull(s.emptySince)
+        assertEquals(true, s.lightsOn)
+        assertTrue(s.lastChange?.reason != LightsChange.Reason.AUTO_OFF)
     }
 
     @Test
-    fun lightsReallyOffLetsAutoOffCountAgain() {
-        val off = run(lightsOnAutoOff, 0, 15_000, liveCount = 0, camera = true)
-        val dark = run(off, 16_000, 20_000, liveCount = 0, camera = false)
-        assertFalse(dark.autoOffSpent)
-        assertEquals(false, dark.lightsOn)
+    fun bulbOffMeansNoCountdown() {
+        val s = run(LightsController.plugStep(lightsOnAutoOff, false, readAt = 0), 0, 30_000, liveCount = 0, camera = null)
+        assertNull(s.countdownEndsAt)
+        assertEquals(false, s.lightsOn)
+    }
+
+    @Test
+    fun bulbUnlinkedDuringTheCountdownStopsIt() {
+        val counting = run(lightsOnAutoOff, 0, LightsController.EMPTY_MS, liveCount = 0, camera = null)
+        assertTrue(counting.countdownEndsAt != null)
+        val unlinked = LightsController.plugStep(counting, null, readAt = LightsController.EMPTY_MS)
+        val s = run(unlinked, LightsController.EMPTY_MS + 1_000, 30_000, liveCount = 0, camera = null)
+        assertNull(s.countdownEndsAt)
+        assertEquals(true, s.lightsOn)
+    }
+
+    @Test
+    fun autoOffDoesNotRepeatWhileTheLightIsReallyStillOn() {
+        val offAt = LightsController.EMPTY_MS + LightsController.COUNTDOWN_MS
+        val off = run(lightsOnAutoOff, 0, offAt, liveCount = 0, camera = null)
+        assertEquals(false, off.lightsOn)
+        assertTrue(off.autoOffSpent)
+        // The plug says the light is still on (the switch didn't take): Auto-off waits.
+        val reported = LightsController.plugStep(off, true, readAt = offAt + 1_000)
+        val stillOn = run(reported, offAt + 1_000, 60_000, liveCount = 0, camera = null)
+        assertEquals(true, stillOn.lightsOn)
+        assertNull(stillOn.countdownEndsAt)
+        assertEquals(LightsChange.Reason.PLUG, stillOn.lastChange?.reason)
+        // Someone comes and goes: Auto-off counts down again.
+        val entered = run(stillOn, 61_000, 61_000, liveCount = 1, camera = null)
+        assertFalse(entered.autoOffSpent)
+        val left = run(entered, 62_000, 62_000 + offAt, liveCount = 0, camera = null)
+        assertEquals(false, left.lightsOn)
+        assertEquals(LightsChange.Reason.AUTO_OFF, left.lastChange?.reason)
     }
 
     @Test
@@ -139,19 +161,21 @@ class LightsControllerTest {
 
     @Test
     fun everyLightsChangeIsRecordedWithItsReason() {
-        // The first reading only sets the lights: no change to notify.
-        val first = LightsController.step(LightsState(autoOff = true), 0, liveCount = 1, cameraLightsOn = true, cameraReadAt = 0)
+        // Camera (no plug): the first reading only sets the lights, no change to notify.
+        val first = LightsController.step(LightsState(), 0, liveCount = 1, cameraLightsOn = true, cameraReadAt = 0)
         assertNull(first.lastChange)
-
-        val auto = run(first, 1_000, 16_000, liveCount = 0, camera = true)
-        assertEquals(LightsChange(1, on = false, LightsChange.Reason.AUTO_OFF), auto.lastChange)
-
-        // The next camera reading still sees the light on.
-        val back = LightsController.step(auto, 20_000, liveCount = 0, cameraLightsOn = true, cameraReadAt = 20_000)
-        assertEquals(LightsChange(2, on = true, LightsChange.Reason.CAMERA), back.lastChange)
-
+        val dark = LightsController.step(first, 10_000, liveCount = 1, cameraLightsOn = false, cameraReadAt = 10_000)
+        assertEquals(LightsChange(1, on = false, LightsChange.Reason.CAMERA), dark.lastChange)
         // The same reading again changes nothing.
-        assertEquals(back.lastChange, LightsController.step(back, 21_000, 0, true, 20_000).lastChange)
+        assertEquals(dark.lastChange, LightsController.step(dark, 11_000, 1, false, 10_000).lastChange)
+
+        // Plug linked: its first reading is not a change either; Auto-off and the plug's reports are.
+        val plugged = LightsController.plugStep(LightsState(autoOff = true), true, readAt = 0)
+        assertNull(plugged.lastChange)
+        val auto = run(plugged, 1_000, 1_000 + LightsController.EMPTY_MS + LightsController.COUNTDOWN_MS, liveCount = 0, camera = null)
+        assertEquals(LightsChange(1, on = false, LightsChange.Reason.AUTO_OFF), auto.lastChange)
+        val back = LightsController.plugStep(auto, true, readAt = 20_000)
+        assertEquals(LightsChange(2, on = true, LightsChange.Reason.PLUG), back.lastChange)
 
         val c = LightsController()
         c.switchLights(true, nowMillis = 0) // from "no reading yet": not a change
@@ -166,7 +190,7 @@ class LightsControllerTest {
     @Test
     fun autoOffAndScheduleWorkTogether() {
         val c = LightsController()
-        c.switchLights(true, nowMillis = 0)
+        c.plugReading(true, readAt = 0)
         c.setAutoOff(true)
         c.schedule(turnOn = true, atMillis = 60_000)
         // Auto-off still switches the lights off while a schedule is pending…

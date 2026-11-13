@@ -6,6 +6,7 @@ import androidx.core.os.LocaleListCompat
 import com.google.firebase.FirebaseApp
 import com.rewatt.app.core.AppGraph
 import com.rewatt.app.core.LocaleManager
+import com.rewatt.app.telemetry.TemperatureAdjust
 
 class ReWattApplication : Application() {
     lateinit var appGraph: AppGraph
@@ -14,6 +15,7 @@ class ReWattApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         FirebaseApp.initializeApp(this)
+        TemperatureAdjust.init(this)
         appGraph = AppGraph(this)
         // Fire detection is always on whenever SGP41 gas data arrives (no-op for modules without it).
         appGraph.fireMonitor.start()

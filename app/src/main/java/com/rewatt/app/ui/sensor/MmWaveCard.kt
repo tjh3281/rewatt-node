@@ -56,7 +56,7 @@ private val PresentGreen = Color(0xFF16A34A)
 private val AbsentGrey = Color(0xFF9CA3AF)
 
 /**
- * The mmWave (presence) card in the landscape ENERGY column: a small radar scope with a sweeping beam,
+ * The mmWave (presence) card in the landscape ENERGY column (portrait shows a small chip on the preview): a small radar scope with a sweeping beam,
  * then the presence: "Detected" or "Clear".
  *  - [moduleAttached] false (no ReWatt module): "--".
  *  - Attached: follows the room's occupancy ([occupied]), the same count as the occupancy card.

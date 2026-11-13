@@ -31,6 +31,8 @@ import com.rewatt.app.ui.sensor.SensorScreen
 import com.rewatt.app.ui.sensor.SensorViewModel
 import com.rewatt.app.ui.sensor.SensorViewModelFactory
 import com.rewatt.app.ui.sensor.SmartPlugSettingsSection
+import com.rewatt.app.ui.sensor.TemperatureAdjustSection
+import com.rewatt.app.usb.UsbConnectionStatus
 import com.rewatt.app.ui.theme.ReWattTheme
 import com.rewatt.app.usb.UsbSentinelService
 
@@ -159,6 +161,12 @@ class MainActivity : AppCompatActivity() {
                             onRequestMicrophone = { securityCameraPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                             onRequestCamera = { securityCameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
                             onTestFireAlarm = { appGraph.fireMonitor.alarm.trigger(vocIndex = null, noxIndex = null, test = true) },
+                            aboveStrictness = {
+                                // Previews against the module's own reading (none when it isn't attached).
+                                val moduleTemp = uiState.sensorState.latestTelemetry?.temperatureC
+                                    ?.takeIf { uiState.sensorState.connectionStatus == UsbConnectionStatus.Connected }
+                                TemperatureAdjustSection(moduleTemp)
+                            },
                         )
                     },
                     settingsSmartPlugContent = { SmartPlugSettingsSection(appGraph.tapoLink) },

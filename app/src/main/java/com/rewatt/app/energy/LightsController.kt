@@ -63,7 +63,7 @@ data class LightsState(
  *  - Lights always follow the camera: every new illuminance reading (about every 10 s while the live
  *    view runs) sets them, whether or not anyone is in the room.
  *  - The app can switch them too: Auto-off (live headcount 0 for [EMPTY_MS], then a [COUNTDOWN_MS]
- *    countdown), Schedule (at a set time) and a tap on the light. That shows at once; the next camera
+ *    countdown; only while the smart plug is linked and the bulb is on), Schedule (at a set time) and a tap on the light. That shows at once; the next camera
  *    reading taken [SETTLE_MS] later confirms it, or shows the light is still on (no relay yet).
  *  - After Auto-off, if the camera still sees the light on, Auto-off waits until someone is in the
  *    room or the light goes off before counting down again (no repeat every few seconds).
@@ -109,10 +109,10 @@ class LightsController {
 
     companion object {
         /** The room must stay empty this long before the lights-off countdown starts… */
-        const val EMPTY_MS = 5_000L
+        const val EMPTY_MS = 3_000L
 
         /** …which then runs this long, shown on the occupancy card. */
-        const val COUNTDOWN_MS = 5_000L
+        const val COUNTDOWN_MS = 3_000L
 
         /** A camera reading taken this soon after the app switched the lights is too early to trust. */
         const val SETTLE_MS = 3_000L
@@ -147,9 +147,10 @@ class LightsController {
             // Someone in the room: Auto-off may count down again once they leave.
             if (liveCount != null && liveCount > 0) s = s.copy(autoOffSpent = false)
 
-            // Auto-off: empty for EMPTY_MS → COUNTDOWN_MS countdown → lights off.
+            // Auto-off: empty for EMPTY_MS → COUNTDOWN_MS countdown → lights off. Only with Auto-off ON,
+            // the bulb connected (smart plug linked) and the bulb ON; otherwise no countdown at all.
             val empty = liveCount == 0
-            if (!s.autoOff || s.lightsOn != true || !empty || s.autoOffSpent) {
+            if (!s.autoOff || !s.plugLinked || s.lightsOn != true || !empty || s.autoOffSpent) {
                 return s.copy(emptySince = null, countdownEndsAt = null)
             }
             val since = s.emptySince ?: now

@@ -564,7 +564,7 @@ private fun LightsMenuButton(
     }
 }
 
-/** The occupancy card while the Auto-off countdown runs: "LIGHTS OFF IN 5 s". */
+/** The occupancy card while the Auto-off countdown runs: "LIGHTS OFF IN 3 s". */
 @Composable
 internal fun LightsOffCountdown(secondsLeft: Int, wide: Boolean) {
     Column(

@@ -1,9 +1,11 @@
 package com.rewatt.app.ui.sensor
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Person
@@ -41,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -66,6 +70,7 @@ fun SmartPlugSettingsSection(link: TapoLink) {
     var password by remember { mutableStateOf(saved.password) }
     var ip by remember { mutableStateOf(saved.ip) }
     var showPassword by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedContainerColor = Color.White,
         unfocusedContainerColor = Color.White,
@@ -129,7 +134,27 @@ fun SmartPlugSettingsSection(link: TapoLink) {
                 colors = fieldColors,
             )
 
-            Text("PLUG IP (OPTIONAL)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "PLUG IP (OPTIONAL)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF374151),
+                    modifier = Modifier.weight(1f),
+                )
+                // New devices are added in the Tapo app: this only points the user there.
+                OutlinedButton(
+                    onClick = { Toast.makeText(context, "Please head to TAPO Home", Toast.LENGTH_SHORT).show() },
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(50),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF09090B)),
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Add device", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
             Text(
                 "Not needed: the plug is found on this Wi-Fi by itself, even when the hotspot gives it a new address. An IP typed here is just tried first.",
                 fontSize = 12.sp,

@@ -228,6 +228,7 @@ fun SecuritySettingsSection(
     onRequestMicrophone: () -> Unit,
     onRequestCamera: () -> Unit,
     onTestFireAlarm: () -> Unit,
+    aboveStrictness: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -362,6 +363,9 @@ fun SecuritySettingsSection(
                 }
             }
         }
+
+        // Settings → Temperature Adjustment sits right above Match strictness.
+        aboveStrictness()
 
         // Match strictness (moved from the SECURITY tab)
         Card(

@@ -338,6 +338,7 @@
     <string name="reg_multi">Lebih daripada satu wajah — seorang sahaja pada satu masa.</string>
     <string name="reg_small">Wajah terlalu kecil — dekatkan diri.</string>
     <string name="reg_error">Model wajah gagal dimuatkan.</string>
+    <string name="reg_camera_error">Kamera tidak dapat dimulakan. Tutup aplikasi kamera lain, kemudian buka ini semula.</string>
     <string name="reg_saved">Disimpan ✓</string>
     <string name="reg_all_done">Orang ini telah didaftarkan.</string>
     <string name="reg_another">Tambah orang lain</string>

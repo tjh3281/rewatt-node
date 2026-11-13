@@ -194,6 +194,27 @@ class LightsControllerTest {
     }
 
     @Test
+    fun roomCountUsesTheCameraFirstThenTheRadar() {
+        // Live view running: the camera's headcount decides (even if the radar disagrees).
+        assertEquals(0, LightsController.roomCount(liveCount = 0, radarOccupied = true))
+        assertEquals(2, LightsController.roomCount(liveCount = 2, radarOccupied = false))
+        // No live view, module plugged in: the radar decides.
+        assertEquals(0, LightsController.roomCount(liveCount = null, radarOccupied = false))
+        assertEquals(1, LightsController.roomCount(liveCount = null, radarOccupied = true))
+        // Neither: unknown, so Auto-off waits.
+        assertNull(LightsController.roomCount(liveCount = null, radarOccupied = null))
+    }
+
+    @Test
+    fun autoOffWorksFromTheRadarAloneWhenTheCameraViewIsOff() {
+        val empty = LightsController.roomCount(liveCount = null, radarOccupied = false)
+        val offAt = LightsController.EMPTY_MS + LightsController.COUNTDOWN_MS
+        val s = run(lightsOnAutoOff, 0, offAt, liveCount = empty, camera = null)
+        assertEquals(false, s.lightsOn)
+        assertEquals(LightsChange.Reason.AUTO_OFF, s.lastChange?.reason)
+    }
+
+    @Test
     fun whileThePlugIsLinkedCameraReadingsNeverChangeTheBulb() {
         // Plug says ON; for a whole minute the camera reads the room as dark, then as bright while the
         // plug says OFF: the bulb always shows the plug, and no camera change is ever recorded.

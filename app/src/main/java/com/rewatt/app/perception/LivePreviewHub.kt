@@ -1,9 +1,6 @@
 package com.rewatt.app.perception
 
-import android.graphics.Bitmap
 import androidx.camera.core.Preview
-import java.util.concurrent.atomic.AtomicReference
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,31 +45,6 @@ class LivePreviewHub {
     fun toggleCamera() {
         mutableFrontCamera.value = !mutableFrontCamera.value
     }
-
-    // ── Demo video (debug builds) ──
-    // A video from the app's assets plays in the camera box instead of the camera, and its frames go
-    // through the same security check (face detection, recognition, YOLO person) and headcount.
-    private val mutableDemoVideo = MutableStateFlow<String?>(null)
-
-    /** The asset playing in place of the camera, or null (the real camera). */
-    val demoVideo: StateFlow<String?> = mutableDemoVideo.asStateFlow()
-
-    fun setDemoVideo(asset: String?) {
-        mutableDemoVideo.value = asset
-    }
-
-    private val pendingDemoFrame = AtomicReference<Bitmap?>(null)
-
-    /** Signals that a new demo frame is waiting ([takeDemoFrame]); only the newest frame is kept. */
-    val demoFrameSignal = Channel<Unit>(Channel.CONFLATED)
-
-    /** The video player hands over the frame it shows; an older one not yet taken is dropped. */
-    fun offerDemoFrame(frame: Bitmap) {
-        pendingDemoFrame.getAndSet(frame)?.recycle()
-        demoFrameSignal.trySend(Unit)
-    }
-
-    fun takeDemoFrame(): Bitmap? = pendingDemoFrame.getAndSet(null)
 
     fun setZoomRange(min: Float, max: Float) {
         if (max < min) return

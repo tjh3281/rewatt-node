@@ -98,21 +98,8 @@ class MainActivity : AppCompatActivity() {
         )
         // Security starts DISARMED every time the app is opened (the user arms it on the SECURITY tab).
         // A rotation keeps whatever the user chose.
-        // Debug builds: `--es demo_video "<asset>.mp4"` plays that video in place of the camera and arms
-        // Security, so the real face check / person check / alarm run on it (for demo recordings).
-        val demoVideo = intent.getStringExtra("demo_video")?.takeIf { BuildConfig.DEBUG }
-        // (Not for the security demo, which arms it below: disarming first would race with arming.)
-        val armingDemo = demoVideo != null && intent.getStringExtra("open_tab").equals("security", ignoreCase = true)
-        if (savedInstanceState == null && !armingDemo && (application as ReWattApplication).appGraph.securitySettings.armed) {
+        if (savedInstanceState == null && (application as ReWattApplication).appGraph.securitySettings.armed) {
             securityViewModel.disarm()
-        }
-        if (savedInstanceState == null && demoVideo != null) {
-            (application as ReWattApplication).appGraph.livePreviewHub.setDemoVideo(demoVideo)
-            // The demo's room climate: 24 °C, TEMP / HUMIDITY boxes raise / lower it (ENERGY tab).
-            (application as ReWattApplication).appGraph.demoClimate.start()
-            // Security is armed only for the security demo (opened on the SECURITY tab); the energy demo
-            // shouldn't ring the intruder alarm for the person in its video.
-            if (armingDemo && hasPermission(Manifest.permission.CAMERA)) securityViewModel.arm()
         }
         // ENERGY tab: the live camera view and the motion → photo → YOLO occupancy flow need the
         // camera service, so start it whenever the app opens (only if the camera is already allowed).

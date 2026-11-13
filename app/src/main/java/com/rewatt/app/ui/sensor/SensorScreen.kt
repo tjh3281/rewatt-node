@@ -159,8 +159,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rewatt.app.ReWattApplication
-import com.rewatt.app.energy.DemoClimate
-import androidx.compose.ui.composed
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -1040,21 +1038,15 @@ private fun CameraTabs(
     onPreviewZoom: (Float) -> Unit,
 ) {
     val energyTab = tab == StitchTab.ENERGY
-    // Debug demo: the presenter's room climate instead of the module (tap TEMP +1 °C, HUMIDITY −1 °C).
-    val demoClimate = (LocalContext.current.applicationContext as ReWattApplication).appGraph.demoClimate
-    val demoTemp by demoClimate.tempC.collectAsStateWithLifecycle()
-    val demo = demoTemp != null
-    // In the demo the module counts as attached (its readings are the demo's), so no "not connected" card.
-    val usbConnected = demo || uiState.sensorState.connectionStatus == UsbConnectionStatus.Connected
+    val usbConnected = uiState.sensorState.connectionStatus == UsbConnectionStatus.Connected
     val telemetry = uiState.sensorState.latestTelemetry
-    val temp = demoTemp?.toFloat() ?: telemetry?.temperatureC
-    val hum = demoTemp?.let { DemoClimate.humidityFor(it).toFloat() } ?: telemetry?.humidityPercent
+    val temp = telemetry?.temperatureC
+    val hum = telemetry?.humidityPercent
+    // Module not attached: "--" (never the last reading frozen on screen).
     val tempAvailable = temp != null && usbConnected
     val humAvailable = hum != null && usbConnected
-    val onTempTap: (() -> Unit)? = if (demo) demoClimate::up else null
-    val onHumTap: (() -> Unit)? = if (demo) demoClimate::down else null
-    // The lights icon: shown while the smart plug is linked, and always in the demo.
-    val showLights = demo || lightsState.plugLinked
+    // The lights icon shows while the smart plug is linked.
+    val showLights = lightsState.plugLinked
     val liveCount = uiState.perceptionState.liveCount(uiState.nowMillis)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -1115,7 +1107,6 @@ private fun CameraTabs(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight()
-                                    .demoTap(onTempTap),
                             )
                             SquareGaugeBox(
                                 label = "HUMIDITY",
@@ -1128,7 +1119,6 @@ private fun CameraTabs(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight()
-                                    .demoTap(onHumTap),
                             )
                         }
                         MmWaveCard(
@@ -1212,8 +1202,6 @@ private fun CameraTabs(
                             nowMillis = uiState.nowMillis,
                             lights = lightsState,
                             liveCount = liveCount,
-                            onTempTap = onTempTap,
-                            onHumTap = onHumTap,
                         )
                     } else {
                         security.side(false)
@@ -1245,7 +1233,7 @@ private fun RoomCard(
     securityState: SecurityUiState,
     lights: LightsState,
     lightsController: LightsController?,
-    /** Show the ceiling light: the smart plug is linked, or the demo is running. */
+    /** Show the ceiling light: the smart plug is linked. */
     showLights: Boolean = lights.plugLinked,
 ) {
     val armed = securityState.armed
@@ -1343,8 +1331,6 @@ private fun SensorBoxesRow(
     nowMillis: Long,
     lights: LightsState,
     liveCount: Int?,
-    onTempTap: (() -> Unit)? = null,
-    onHumTap: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -1364,7 +1350,6 @@ private fun SensorBoxesRow(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .demoTap(onTempTap),
         )
         CompactGaugeCard(
             label = "HUMIDITY",
@@ -1377,7 +1362,6 @@ private fun SensorBoxesRow(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .demoTap(onHumTap),
         )
         OccupancyCard(
             energy = energyState,
@@ -1490,12 +1474,6 @@ private fun WideGaugeBox(
     }
 }
 
-/** Demo only: a tap on the box runs [onTap] (no ripple, so the card looks unchanged); null = not tappable. */
-private fun Modifier.demoTap(onTap: (() -> Unit)?): Modifier =
-    if (onTap == null) this else composed {
-        clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onTap)
-    }
-
 /** Gauge box (landscape, two side by side): the label on top, the ring filling the rest. */
 @Composable
 private fun SquareGaugeBox(
@@ -1560,7 +1538,7 @@ private fun OccupancyCard(
     liveCount: Int?,
     modifier: Modifier = Modifier,
     wide: Boolean = false,
-    /** Show the lights icon: the smart plug is linked, or the demo is running. */
+    /** Show the lights icon: the smart plug is linked. */
     showLights: Boolean = lights.plugLinked,
 ) {
     // The live headcount on the preview when it is running; otherwise the last radar-triggered photo.
@@ -1807,10 +1785,8 @@ private fun SharedCameraBox(
     // TEMP (testing): tapping the LIVE chip flips between the back and front camera.
     val previewHub = (LocalContext.current.applicationContext as ReWattApplication).appGraph.livePreviewHub
     val frontCamera by previewHub.frontCamera.collectAsStateWithLifecycle()
-    // Debug demo: a video playing in place of the camera (same security check and headcount).
-    val demoVideo by previewHub.demoVideo.collectAsStateWithLifecycle()
     // While armed the camera service is up, so SECURITY shows the live view even without occupancy capture.
-    val cameraOn = demoVideo != null || perception.isRunning || (!energyTab && securityState.armed)
+    val cameraOn = perception.isRunning || (!energyTab && securityState.armed)
     val liveCheck = !energyTab && securityState.liveActive
     val frame = perception.latestFrame
     val showPhoto = energyTab && frame != null && energy.photoPinned && !energy.capturing
@@ -1824,16 +1800,11 @@ private fun SharedCameraBox(
     ) {
         // Base feed — identical on both tabs.
         if (cameraOn) {
-            val demo = demoVideo
-            if (demo != null) {
-                DemoVideoView(asset = demo, onLiveFrame = onLiveFrame, modifier = Modifier.fillMaxSize())
-            } else {
-                LivePreview(
-                    onLivePreviewSurface = onLivePreviewSurface,
-                    onLiveFrame = onLiveFrame,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+            LivePreview(
+                onLivePreviewSurface = onLivePreviewSurface,
+                onLiveFrame = onLiveFrame,
+                modifier = Modifier.fillMaxSize(),
+            )
             // Person frames on both tabs (SECURITY's logic checks for a person too); the face frames
             // of the live security check are drawn on top of them below.
             if (liveCount != null) LivePeopleBoxes(people = perception.livePeople, modifier = Modifier.fillMaxSize())
@@ -1880,7 +1851,7 @@ private fun SharedCameraBox(
                 frameWidth = securityState.liveFrameWidth,
                 frameHeight = securityState.liveFrameHeight,
                 modifier = Modifier.fillMaxSize(),
-                mirrored = frontCamera && demoVideo == null,
+                mirrored = frontCamera,
             )
         }
 

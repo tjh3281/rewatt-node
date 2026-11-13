@@ -100,7 +100,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rewatt.app.BuildConfig
 import com.rewatt.app.R
-import com.rewatt.app.ReWattApplication
 import com.rewatt.app.core.AppGraph
 import com.rewatt.app.perception.CameraCaptureService
 import java.text.SimpleDateFormat
@@ -258,7 +257,7 @@ internal fun intruderAlarmDetail(score: Float?): String =
  * Full-screen alarm page (fire or intruder) on a dark backdrop that breathes in the alarm colour, with
  * a slow siren beam sweeping round and a pulsing red edge.
  *  - An emblem with radar rings, the heading, a live clock (the digits roll as they change; always the
- *    12-hour clock with AM / PM), when it started and how long it has rung, and the reason.
+ *    24-hour clock, the phone's current time and date), when it started and how long it has rung, and the reason.
  *  - Intruder: the stranger photo in a viewfinder frame with a scan line.
  *  - One big DISMISS button (a light sheen runs across it; it presses in when touched).
  * Everything fades and rises in, one part after another, when the page opens. It takes every touch,
@@ -347,14 +346,9 @@ internal fun AlarmFullScreen(
         }
     }
     val started = remember(startedAtMillis) { startedAtMillis ?: System.currentTimeMillis() }
-    // Demo video playing (debug demo): the page shows the demo's date and time (see [demoClock]); the
-    // real camera always shows the real time.
-    val hub = (context.applicationContext as ReWattApplication).appGraph.livePreviewHub
-    val demoVideo by hub.demoVideo.collectAsStateWithLifecycle()
-    val shown: (Long) -> Long = { t -> if (demoVideo != null) demoClock(t) else t }
     val locale = context.resources.configuration.locales[0]
-    // Always the 12-hour clock with AM / PM on the alarm page (whatever the phone's 24-hour setting).
-    val is24Hour = false
+    // Always the 24-hour clock on the alarm page, with the phone's current date and time.
+    val is24Hour = true
     val clockFormat = remember(locale, is24Hour) { bestFormat(locale, if (is24Hour) "Hms" else "hmsa") }
     val dateFormat = remember(locale) { bestFormat(locale, "EEEEdMMMMyyyy") }
     val startedFormat = remember(locale, is24Hour, started) {
@@ -422,7 +416,7 @@ internal fun AlarmFullScreen(
     val clock: @Composable (Modifier, Boolean, Dp) -> Unit = { modifier, centered, size ->
         Column(modifier, horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start) {
             RollingText(
-                clockFormat.format(Date(shown(now))),
+                clockFormat.format(Date(now)),
                 TextStyle(
                     color = Color.White,
                     fontSize = size.value.sp,
@@ -430,12 +424,12 @@ internal fun AlarmFullScreen(
                     fontFeatureSettings = "tnum",
                 ),
             )
-            Text(dateFormat.format(Date(shown(now))), color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
+            Text(dateFormat.format(Date(now)), color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
         }
     }
     val stats: @Composable (Modifier) -> Unit = { modifier ->
         Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile(stringResource(R.string.alarm_started_label), startedFormat.format(Date(shown(started))), Modifier.weight(1f))
+            StatTile(stringResource(R.string.alarm_started_label), startedFormat.format(Date(started)), Modifier.weight(1f))
             StatTile(stringResource(R.string.alarm_ringing_label), elapsed(now - started), Modifier.weight(1f), accent = theme.accent)
         }
     }
@@ -797,19 +791,6 @@ private fun RollingText(text: String, style: TextStyle) {
 
 private fun bestFormat(locale: java.util.Locale, skeleton: String): SimpleDateFormat =
     SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton), locale)
-
-/**
- * Debug demo (demo video playing): the alarm page's clock shows 12 November 2026, in the afternoon /
- * evening: the real time of day, with a morning hour shown as the same hour PM. Seconds keep ticking.
- */
-private fun demoClock(realMillis: Long): Long {
-    val c = Calendar.getInstance().apply { timeInMillis = realMillis }
-    c.set(Calendar.YEAR, 2026)
-    c.set(Calendar.MONTH, Calendar.NOVEMBER)
-    c.set(Calendar.DAY_OF_MONTH, 12)
-    if (c.get(Calendar.HOUR_OF_DAY) < 12) c.add(Calendar.HOUR_OF_DAY, 12)
-    return c.timeInMillis
-}
 
 private fun sameDay(a: Long, b: Long): Boolean {
     val x = Calendar.getInstance().apply { timeInMillis = a }

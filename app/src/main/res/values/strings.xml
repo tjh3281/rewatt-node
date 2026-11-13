@@ -274,10 +274,7 @@
     <string name="alarm_ringing_label">RINGING</string>
     <string name="alarm_captured">CAPTURED</string>
     <string name="alarm_embedding_stored">Facial embedding stored for police report</string>
-    <string name="recording_notice_title">You are being recorded</string>
-    <string name="aircond_cooling_title">Temp reached %1$d°C</string>
-    <string name="aircond_cooling_text">Lowering AC temperature · %1$s</string>
-    <string name="recording_notice_text">Person detected in %1$s · recording for security</string>
+    <string name="recording_notice_title">You are being recorded</string>    <string name="recording_notice_text">Person detected in %1$s · recording for security</string>
     <string name="cctv_resume_title">CCTV paused</string>
     <string name="cctv_resume_text">Open ReWatt to resume the security camera.</string>
     <string name="cctv_deterrent_speech">You are being recorded</string>

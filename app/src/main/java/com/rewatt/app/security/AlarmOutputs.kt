@@ -24,10 +24,10 @@ enum class AlarmReason { INTRUDER, FIRE }
 
 /**
  * Alarm SOUND on/off: the siren (intruder and fire) and the spoken "You are being recorded".
- * MUTED FOR NOW (testing next to teammates). Set to true to bring the sound back; the alarm screen,
- * pop-ups, vibration, torch strobe and evidence are unaffected either way.
+ * Set to false to mute them while testing; the alarm screen, pop-ups, vibration, torch strobe and
+ * evidence are unaffected either way.
  */
-const val ALARM_SOUND_ON = false
+const val ALARM_SOUND_ON = true
 
 /**
  * Physical alarm outputs shared by the intruder and fire alarms: max ALARM-stream volume (restored

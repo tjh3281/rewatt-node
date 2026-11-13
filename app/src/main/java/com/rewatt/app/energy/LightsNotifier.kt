@@ -55,38 +55,9 @@ class LightsNotifier(context: Context) {
         runCatching { NotificationManagerCompat.from(appContext).notify(NOTIFICATION_ID, notification) }
     }
 
-    /** "AC ON": the room reached [tempC] and the aircond is lowering the temperature. */
-    fun notifyAircondCooling(roomId: String, tempC: Int) {
-        val text = localizedContext(appContext)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL, text.getString(R.string.lights_channel), NotificationManager.IMPORTANCE_HIGH).apply {
-                setSound(null, null)
-                enableVibration(false)
-            },
-        )
-        val open = PendingIntent.getActivity(
-            appContext,
-            REQUEST_OPEN,
-            Intent(appContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val notification = NotificationCompat.Builder(appContext, CHANNEL)
-            .setSmallIcon(R.drawable.ic_rewatt)
-            .setContentTitle(text.getString(R.string.aircond_cooling_title, tempC))
-            .setContentText(text.getString(R.string.aircond_cooling_text, roomId))
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(open)
-            .setAutoCancel(true)
-            .setTimeoutAfter(TIMEOUT_MS)
-            .build()
-        runCatching { NotificationManagerCompat.from(appContext).notify(AIRCOND_NOTIFICATION_ID, notification) }
-    }
-
     private companion object {
         const val CHANNEL = "rewatt_lights"
         const val NOTIFICATION_ID = 4710
-        const val AIRCOND_NOTIFICATION_ID = 4712
         const val REQUEST_OPEN = 4711
         const val TIMEOUT_MS = 60_000L
     }

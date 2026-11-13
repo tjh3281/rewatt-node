@@ -16,6 +16,8 @@ import com.rewatt.app.energy.LightsNotifier
 import com.rewatt.app.perception.PerceptionStateHolder
 import com.rewatt.app.perception.PerceptionUiState
 import com.rewatt.app.telemetry.FireThreshold
+import com.rewatt.app.telemetry.toOccupancyDecision
+import com.rewatt.app.usb.UsbConnectionStatus
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,7 +96,14 @@ class SensorViewModel(
                 val current = System.currentTimeMillis()
                 nowMillisFlow.value = current
                 val perception = perceptionStateHolder.state.value
-                lightsController.tick(current, perception.liveCount(current), perception.lightsOn, perception.lightsReadAtMillis)
+                // Auto-off's "is the room empty?": the camera's live headcount, or the module's radar
+                // while the camera view isn't running (works with and without the module).
+                val sensor = telemetryRepository.telemetryState.value
+                val radar = sensor.latestTelemetry?.takeIf {
+                    sensor.connectionStatus == UsbConnectionStatus.Connected && current - it.capturedAtMillis <= RADAR_FRESH_MS
+                }
+                val people = LightsController.roomCount(perception.liveCount(current), radar?.toOccupancyDecision()?.occupied)
+                lightsController.tick(current, people, perception.lightsOn, perception.lightsReadAtMillis)
                 streamMqttTelemetry(current)
                 delay(1000L)
             }
@@ -178,6 +187,9 @@ class SensorViewModel(
         mqttRepository.publishTelemetryJson(json.toString(), state.roomId)
     }
 }
+
+/** A radar reading older than this (module unplugged or stalled) isn't used for Auto-off. */
+private const val RADAR_FRESH_MS = 3_000L
 
 class SensorViewModelFactory(
     private val appContext: Context,

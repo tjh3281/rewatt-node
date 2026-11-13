@@ -7,7 +7,6 @@ import com.rewatt.app.data.ReWattDatabase
 import com.rewatt.app.data.TelemetryRepository
 import com.rewatt.app.data.WeatherRepository
 import com.rewatt.app.energy.EnergyStateHolder
-import com.rewatt.app.energy.DemoClimate
 import com.rewatt.app.energy.LightsController
 import com.rewatt.app.energy.tapo.TapoLink
 import com.rewatt.app.perception.LiveHeadcount
@@ -77,11 +76,6 @@ class AppGraph(context: Context) {
     /** Room lights (live illuminance, Auto-off, Schedule) and aircond; ticked by SensorViewModel. */
     val lightsController: LightsController by lazy {
         LightsController()
-    }
-
-    /** Debug demo: tap-driven room temperature / humidity in the ENERGY tab (see [DemoClimate]). */
-    val demoClimate: DemoClimate by lazy {
-        DemoClimate(appContext, lightsController) { mqttSyncRepository.roomId.ifBlank { "Room1" } }
     }
 
     /** The Tapo smart plug that switches the Room 1 lights for real (local Wi-Fi). */

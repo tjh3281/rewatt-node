@@ -99,8 +99,6 @@ class LightsController {
 
     fun toggleAircond() = mutableState.update { it.copy(aircondOn = !it.aircondOn) }
 
-    fun setAircond(on: Boolean) = mutableState.update { it.copy(aircondOn = on) }
-
     fun toggleFan() = mutableState.update { it.copy(fanOn = !it.fanOn) }
 
     /**
@@ -118,6 +116,16 @@ class LightsController {
 
         /** A camera reading taken this soon after the app switched the lights is too early to trust. */
         const val SETTLE_MS = 3_000L
+
+        /**
+         * How many people are in the room, for Auto-off: the camera's live headcount while the live view
+         * runs; otherwise, with the ReWatt module plugged in and reading, its radar (occupied → 1,
+         * empty → 0); otherwise unknown (null: the room doesn't count as empty, so nothing switches off).
+         * The camera comes first: it sees who is actually there; the radar covers the times the camera
+         * view isn't running (another tab, screen off).
+         */
+        fun roomCount(liveCount: Int?, radarOccupied: Boolean?): Int? =
+            liveCount ?: radarOccupied?.let { if (it) 1 else 0 }
 
         internal fun step(state: LightsState, now: Long, liveCount: Int?, cameraLightsOn: Boolean?, cameraReadAt: Long?): LightsState {
             var s = state

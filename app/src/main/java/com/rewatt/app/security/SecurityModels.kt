@@ -129,6 +129,8 @@ data class SecurityUiState(
     /** Live frame size (upright), so the overlay can map boxes onto the FILL_CENTER preview. */
     val liveFrameWidth: Int = 0,
     val liveFrameHeight: Int = 0,
+    /** When the "You are being recorded" warning was last spoken (person, face not seen): shows the in-app alert. */
+    val recordingNoticeAtMillis: Long? = null,
 )
 
 /** Persisted summary of one motion event (events/<id>/event.json). */

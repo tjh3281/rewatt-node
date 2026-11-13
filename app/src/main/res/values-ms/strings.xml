@@ -272,6 +272,11 @@
     <string name="alarm_started_label">BERMULA</string>
     <string name="alarm_ringing_label">BERBUNYI</string>
     <string name="alarm_captured">DIRAKAM</string>
+    <string name="alarm_embedding_stored">Embedding wajah disimpan untuk laporan polis</string>
+    <string name="recording_notice_title">Anda sedang dirakam</string>
+    <string name="aircond_cooling_title">Suhu mencapai %1$d°C</string>
+    <string name="aircond_cooling_text">Menurunkan suhu AC · %1$s</string>
+    <string name="recording_notice_text">Orang dikesan di %1$s · merakam untuk keselamatan</string>
     <string name="alarm_started">Bermula %1$s · berbunyi %2$s</string>
     <string name="cctv_resume_title">CCTV dijeda</string>
     <string name="cctv_resume_text">Buka ReWatt untuk menyambung kamera keselamatan.</string>

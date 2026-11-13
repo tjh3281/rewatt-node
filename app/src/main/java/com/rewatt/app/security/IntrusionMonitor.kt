@@ -124,6 +124,8 @@ class IntrusionMonitor(
         val photoIndex = AtomicInteger(0)
         val strangerHandled = AtomicBoolean(false)
         val personCheckRunning = AtomicBoolean(false)
+        /** The alarm was dismissed: from this time (elapsedRealtime) faces are judged afresh and can ring it again. 0 = none. */
+        @Volatile var rearmAt = 0L
 
         // Speed stats, logged every [STATS_LOG_MS].
         var fps: Float? = null
@@ -186,11 +188,16 @@ class IntrusionMonitor(
         phase = EventPhase.IDLE
     }
 
-    /** Called after the user dismisses the alarm (red screen or notification). */
+    /**
+     * Called after the user dismisses the alarm (red screen or notification). If the event is still
+     * running, the alarm is re-armed after [REARM_AFTER_DISMISS_MS]: faces are judged afresh, so an unknown
+     * face still (or again) in view rings it again — dismissing never silences the rest of the event.
+     */
     suspend fun onAlarmDismissed() {
         stateHolder.state.value.alarmEventId?.let { id ->
             eventStore.update(id) { it.copy(alarmDismissedAtMillis = System.currentTimeMillis()) }
         }
+        live?.let { it.rearmAt = SystemClock.elapsedRealtime() + REARM_AFTER_DISMISS_MS }
         if (releaseCameraAfterAlarm && eventId == null) {
             releaseCameraAfterAlarm = false
             controllerProvider()?.endLiveSecurity(keepImageBound = perceptionActive())
@@ -213,21 +220,23 @@ class IntrusionMonitor(
                 consecutiveMoving = 0
                 Log.i(TAG, if (moduleAbsent) "No reWatt module: the camera watches for people" else "reWatt module back: radar wakes the camera")
             }
-            val present = if (cameraOnly) {
-                live?.let { SystemClock.elapsedRealtime() - it.lastPresenceAt <= CAMERA_PRESENCE_HOLD_MS } ?: false
-            } else {
-                fresh && telemetry!!.toOccupancyDecision().occupied
-            }
+            // Someone is here: the camera saw a face or a person recently, or (with the module) the radar
+            // says the room is occupied. The camera counts with the module too, so a person the radar
+            // misses (standing still, out of its range) keeps the face check going.
+            val cameraPresent = live?.let { SystemClock.elapsedRealtime() - it.lastPresenceAt <= CAMERA_PRESENCE_HOLD_MS } ?: false
+            val present = cameraPresent || (!cameraOnly && fresh && telemetry!!.toOccupancyDecision().occupied)
 
             when (phase) {
-                EventPhase.IDLE -> if (cameraOnly) {
+                // The camera always watches while armed (face twice in a row, or a YOLO person, starts the
+                // face check), module or not; with the module, radar movement can also start it.
+                EventPhase.IDLE -> {
                     if (watch == null && !alarm.alarmActive && now >= watchRetryAt) startCameraWatch()
-                } else if (newSample) {
-                    if (watch != null) stopCameraWatch()
-                    consecutiveMoving = if (moving) consecutiveMoving + 1 else 0
-                    if (consecutiveMoving >= START_SAMPLES) {
-                        consecutiveMoving = 0
-                        startEvent(now)
+                    if (!cameraOnly && newSample) {
+                        consecutiveMoving = if (moving) consecutiveMoving + 1 else 0
+                        if (consecutiveMoving >= START_SAMPLES && phase == EventPhase.IDLE) {
+                            consecutiveMoving = 0
+                            startEvent(now)
+                        }
                     }
                 }
                 EventPhase.MOTION -> if (!present) {
@@ -335,6 +344,8 @@ class IntrusionMonitor(
         eventStore.create(id, now)
         stateHolder.update { it.copy(phase = EventPhase.MOTION, activeEventId = id, recording = false, torchOn = false, statusMessage = null) }
         Log.i(TAG, "Event $id started")
+        // A person is confirmed (second detection in a row): the "You are being recorded" pop-up comes first.
+        alarm.showRecordingNotice()
         eventJob = scope.launch(eventDispatcher) { startLiveSession(id) }
     }
 
@@ -402,6 +413,14 @@ class IntrusionMonitor(
             if (live !== session) return
             val bitmap = frame.bitmap
             if (session.dark == null) onFirstFrame(session, frame)
+            // Re-arm after a dismissal (here, on the analysis thread that owns the tracker).
+            val rearmAt = session.rearmAt
+            if (rearmAt != 0L && SystemClock.elapsedRealtime() >= rearmAt) {
+                session.rearmAt = 0L
+                session.tracker.reset()
+                session.strangerHandled.set(false)
+                Log.i(TAG, "Alarm dismissed: watching for an unknown face again")
+            }
 
             val started = SystemClock.elapsedRealtime()
             val faces = recognizer.detect(bitmap)
@@ -430,8 +449,13 @@ class IntrusionMonitor(
                 scope.launch(eventDispatcher) { onFamily(session, family) }
             }
             if (step.newlyUnknown.isNotEmpty() && session.strangerHandled.compareAndSet(false, true)) {
+                // The intruder's facial embedding (from this clean frame, before labels are drawn on it).
+                val unknown = step.newlyUnknown.minBy { it.similarity ?: 0f }
+                val embedding = faces
+                    .minByOrNull { centreDistance(it.box.toFaceBox(), unknown.box) }
+                    ?.let { face -> runCatching { recognizer.embedding(bitmap, face) }.getOrNull() }
                 val annotated = recognizer.annotateLabels(bitmap, step.faces.map { it.toLabel() })
-                scope.launch(eventDispatcher) { onStranger(session, annotated, step) }
+                scope.launch(eventDispatcher) { onStranger(session, annotated, step, embedding) }
             } else if (verdict == EventResult.NO_FACE || verdict == EventResult.STRANGER) {
                 if (now - session.lastPhotoAt >= PHOTO_INTERVAL_MS) saveEvidencePhoto(session, bitmap, step.faces, now)
             }
@@ -441,9 +465,8 @@ class IntrusionMonitor(
                 step.faces.isEmpty() &&
                 now - session.lastFaceAt >= NO_FACE_PERSON_CHECK_MS &&
                 now - session.lastPersonCheckAt >= NO_FACE_PERSON_CHECK_MS
-            // No module: with no face in view, YOLO decides whether someone is still there.
-            val presenceCheck = cameraOnly &&
-                step.faces.isEmpty() &&
+            // With no face in view, YOLO checks whether someone is still there (with or without the module).
+            val presenceCheck = step.faces.isEmpty() &&
                 now - session.lastPresenceCheckAt >= CAMERA_PRESENCE_CHECK_MS
             if ((personCheck || presenceCheck) && session.personCheckRunning.compareAndSet(false, true)) {
                 if (personCheck) session.lastPersonCheckAt = now
@@ -497,13 +520,18 @@ class IntrusionMonitor(
     }
 
     /** ✗ a face stayed unknown (or masked) for ~1 s: evidence, recording, alarm, MQTT. */
-    private suspend fun onStranger(session: LiveSession, annotated: Bitmap, step: TrackStep) {
+    private suspend fun onStranger(session: LiveSession, annotated: Bitmap, step: TrackStep, embedding: FloatArray?) {
         try {
             if (live !== session) return
             val unknown = step.newlyUnknown.minBy { it.similarity ?: 0f }
             val id = session.eventId
             verdict = EventResult.STRANGER
             bestScore = unknown.similarity
+            // Kept with the event's evidence (photo, clip) for a police report.
+            embedding?.let {
+                eventStore.saveFaceEmbedding(id, it)
+                Log.i(TAG, "Intruder facial embedding stored (${it.size} values)")
+            }
             val photoName = eventStore.savePhoto(id, session.photoIndex.incrementAndGet(), annotated)
             session.lastPhotoAt = SystemClock.elapsedRealtime()
             strangerPhoto = photoName
@@ -689,6 +717,12 @@ class IntrusionMonitor(
 
     private fun RectF.toFaceBox() = FaceBox(left, top, right, bottom)
 
+    private fun centreDistance(a: FaceBox, b: FaceBox): Float {
+        val dx = (a.left + a.right) / 2f - (b.left + b.right) / 2f
+        val dy = (a.top + a.bottom) / 2f - (b.top + b.bottom) / 2f
+        return dx * dx + dy * dy
+    }
+
     private fun TrackedFace.toLabel(): FaceRecognizer.FaceLabel {
         val who = when (status) {
             TrackStatus.FAMILY -> name ?: FamilyFaceStore.FAMILY_LABEL
@@ -724,6 +758,9 @@ class IntrusionMonitor(
         private const val CAMERA_PRESENCE_HOLD_MS = 10_000L
         private const val START_SAMPLES = 2
         const val GRACE_MS = 5_000L
+
+        /** After DISMISS, a short pause before an unknown face can ring the alarm again. */
+        private const val REARM_AFTER_DISMISS_MS = 3_000L
         private const val TORCH_RETRY_MS = 300L
         private const val MAX_CLIP_MS = 5 * 60 * 1000L
         private const val MQTT_IMAGE_MAX_SIDE = 960

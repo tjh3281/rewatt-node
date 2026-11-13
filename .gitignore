@@ -33,3 +33,6 @@ __pycache__/
 history.png
 forecast_day.png
 forecast_week.png
+
+# Large local video files used for testing (not in git)
+app/src/main/assets/*.mp4

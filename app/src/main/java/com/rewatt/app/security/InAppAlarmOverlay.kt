@@ -4,6 +4,9 @@ import android.app.Activity
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -47,7 +50,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.Face
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material3.Icon
@@ -95,6 +100,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rewatt.app.BuildConfig
 import com.rewatt.app.R
+import com.rewatt.app.ReWattApplication
 import com.rewatt.app.core.AppGraph
 import com.rewatt.app.perception.CameraCaptureService
 import java.text.SimpleDateFormat
@@ -178,7 +184,10 @@ fun InAppAlarmOverlay(graph: AppGraph) {
         }
         BuildConfig.DEBUG -> AlarmPreview(graph, roomId)
     }
+    // The small "You are being recorded" notice is shown in the camera box, under its status chip.
 }
+
+
 
 /**
  * Debug builds only: `adb shell am start -S -n com.rewatt.app/.MainActivity --es preview_alarm fire|intruder`
@@ -248,8 +257,8 @@ internal fun intruderAlarmDetail(score: Float?): String =
 /**
  * Full-screen alarm page (fire or intruder) on a dark backdrop that breathes in the alarm colour, with
  * a slow siren beam sweeping round and a pulsing red edge.
- *  - An emblem with radar rings, the heading, a live clock (the digits roll as they change; 12 / 24 h
- *    as set on the phone), when it started and how long it has rung, and the reason.
+ *  - An emblem with radar rings, the heading, a live clock (the digits roll as they change; always the
+ *    12-hour clock with AM / PM), when it started and how long it has rung, and the reason.
  *  - Intruder: the stranger photo in a viewfinder frame with a scan line.
  *  - One big DISMISS button (a light sheen runs across it; it presses in when touched).
  * Everything fades and rises in, one part after another, when the page opens. It takes every touch,
@@ -338,8 +347,14 @@ internal fun AlarmFullScreen(
         }
     }
     val started = remember(startedAtMillis) { startedAtMillis ?: System.currentTimeMillis() }
+    // Demo video playing (debug demo): the page shows the demo's date and time (see [demoClock]); the
+    // real camera always shows the real time.
+    val hub = (context.applicationContext as ReWattApplication).appGraph.livePreviewHub
+    val demoVideo by hub.demoVideo.collectAsStateWithLifecycle()
+    val shown: (Long) -> Long = { t -> if (demoVideo != null) demoClock(t) else t }
     val locale = context.resources.configuration.locales[0]
-    val is24Hour = android.text.format.DateFormat.is24HourFormat(context)
+    // Always the 12-hour clock with AM / PM on the alarm page (whatever the phone's 24-hour setting).
+    val is24Hour = false
     val clockFormat = remember(locale, is24Hour) { bestFormat(locale, if (is24Hour) "Hms" else "hmsa") }
     val dateFormat = remember(locale) { bestFormat(locale, "EEEEdMMMMyyyy") }
     val startedFormat = remember(locale, is24Hour, started) {
@@ -407,7 +422,7 @@ internal fun AlarmFullScreen(
     val clock: @Composable (Modifier, Boolean, Dp) -> Unit = { modifier, centered, size ->
         Column(modifier, horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start) {
             RollingText(
-                clockFormat.format(Date(now)),
+                clockFormat.format(Date(shown(now))),
                 TextStyle(
                     color = Color.White,
                     fontSize = size.value.sp,
@@ -415,12 +430,12 @@ internal fun AlarmFullScreen(
                     fontFeatureSettings = "tnum",
                 ),
             )
-            Text(dateFormat.format(Date(now)), color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
+            Text(dateFormat.format(Date(shown(now))), color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
         }
     }
     val stats: @Composable (Modifier) -> Unit = { modifier ->
         Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile(stringResource(R.string.alarm_started_label), startedFormat.format(Date(started)), Modifier.weight(1f))
+            StatTile(stringResource(R.string.alarm_started_label), startedFormat.format(Date(shown(started))), Modifier.weight(1f))
             StatTile(stringResource(R.string.alarm_ringing_label), elapsed(now - started), Modifier.weight(1f), accent = theme.accent)
         }
     }
@@ -436,6 +451,10 @@ internal fun AlarmFullScreen(
             Spacer(Modifier.width(8.dp))
             Text(detail, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
+    }
+    // Right under the captured photo: the intruder's facial embedding is kept with the evidence.
+    val evidence: @Composable (Modifier) -> Unit = { modifier ->
+        EvidenceStoredBar(stringResource(R.string.alarm_embedding_stored), theme.accent, pulse, modifier)
     }
     val dismiss: @Composable (Modifier) -> Unit = { modifier ->
         DismissButton(stringResource(R.string.cctv_dismiss).uppercase(), theme.accentDeep, sheen, onDismiss, modifier, if (shortScreen) 60.dp else 70.dp)
@@ -485,6 +504,7 @@ internal fun AlarmFullScreen(
                     val current = photo
                     if (current != null) {
                         CapturedPhoto(current, theme.accent, scan, Modifier.fillMaxWidth().weight(1f).enter(2))
+                        evidence(Modifier.fillMaxWidth().enter(3))
                     } else {
                         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().enter(1), contentAlignment = Alignment.Center) {
                             // The emblem with its rings is 2.3 × the badge: fit it in the space left.
@@ -516,6 +536,7 @@ internal fun AlarmFullScreen(
                 reason(Modifier.enter(5))
                 if (current != null) {
                     CapturedPhoto(current, theme.accent, scan, Modifier.fillMaxWidth().weight(1f).enter(5))
+                    evidence(Modifier.fillMaxWidth().enter(5))
                 } else {
                     Spacer(Modifier.weight(1f))
                 }
@@ -657,10 +678,11 @@ private fun CapturedPhoto(photo: ImageBitmap, accent: Color, scan: Float, modifi
                 drawLine(Color.White, corner, corner + Offset(0f, len * dir.y), strokeWidth = w, cap = StrokeCap.Round)
             }
         }
+        // Bottom-left, tucked inside the viewfinder corner, so it doesn't cover the captured face.
         Row(
             Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 16.dp)
+                .align(Alignment.BottomStart)
+                .padding(start = 22.dp, bottom = 22.dp)
                 .clip(RoundedCornerShape(50))
                 .background(Color.Black.copy(alpha = 0.55f))
                 .padding(horizontal = 10.dp, vertical = 4.dp),
@@ -670,6 +692,44 @@ private fun CapturedPhoto(photo: ImageBitmap, accent: Color, scan: Float, modifi
             Spacer(Modifier.width(6.dp))
             Text(stringResource(R.string.alarm_captured), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
         }
+    }
+}
+
+/**
+ * "Facial embedding stored for police report": a bold, high-contrast bar under the captured photo, with
+ * a fingerprint badge and a softly pulsing border so it is seen at a glance.
+ */
+@Composable
+private fun EvidenceStoredBar(text: String, accent: Color, pulse: Float, modifier: Modifier) {
+    Row(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.14f))
+            .border(2.dp, Color.White.copy(alpha = 0.45f + 0.45f * pulse), RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(Color.White),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Rounded.Fingerprint, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text,
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF4ADE80), modifier = Modifier.size(22.dp))
     }
 }
 
@@ -737,6 +797,19 @@ private fun RollingText(text: String, style: TextStyle) {
 
 private fun bestFormat(locale: java.util.Locale, skeleton: String): SimpleDateFormat =
     SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton), locale)
+
+/**
+ * Debug demo (demo video playing): the alarm page's clock shows 12 November 2026, in the afternoon /
+ * evening: the real time of day, with a morning hour shown as the same hour PM. Seconds keep ticking.
+ */
+private fun demoClock(realMillis: Long): Long {
+    val c = Calendar.getInstance().apply { timeInMillis = realMillis }
+    c.set(Calendar.YEAR, 2026)
+    c.set(Calendar.MONTH, Calendar.NOVEMBER)
+    c.set(Calendar.DAY_OF_MONTH, 12)
+    if (c.get(Calendar.HOUR_OF_DAY) < 12) c.add(Calendar.HOUR_OF_DAY, 12)
+    return c.timeInMillis
+}
 
 private fun sameDay(a: Long, b: Long): Boolean {
     val x = Calendar.getInstance().apply { timeInMillis = a }

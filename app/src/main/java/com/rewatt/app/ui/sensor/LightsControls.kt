@@ -227,7 +227,7 @@ internal fun FanIcon(on: Boolean, modifier: Modifier = Modifier, size: Dp = 22.d
 
 /**
  * The lights, aircond and fan icons, stacked (landscape occupancy card). Tapping an icon switches it
- * on ⇄ off. The lights icon shows only while the smart plug is linked.
+ * on ⇄ off. The lights icon shows only while the smart plug is linked ([showLights]; always in the demo).
  */
 @Composable
 internal fun LightsAndAircondColumn(
@@ -236,9 +236,10 @@ internal fun LightsAndAircondColumn(
     onToggleAircond: () -> Unit,
     onToggleFan: () -> Unit,
     modifier: Modifier = Modifier,
+    showLights: Boolean = lights.plugLinked,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (lights.plugLinked) {
+        if (showLights) {
             BulbIcon(
                 on = lights.lightsOn,
                 size = 30.dp,

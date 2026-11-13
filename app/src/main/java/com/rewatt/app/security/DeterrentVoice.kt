@@ -49,6 +49,10 @@ class DeterrentVoice(context: Context) : TextToSpeech.OnInitListener {
 
     /** Speak the deterrent once; [onDone] runs when finished (or immediately if TTS is unavailable). */
     fun speak(onDone: () -> Unit) {
+        if (!ALARM_SOUND_ON) { // muted for now: "You are being recorded" is not spoken
+            onDone()
+            return
+        }
         val engine = tts
         if (engine == null || !ready) {
             onDone()

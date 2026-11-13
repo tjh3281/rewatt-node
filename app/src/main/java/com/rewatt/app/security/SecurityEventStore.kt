@@ -25,6 +25,20 @@ class SecurityEventStore(context: Context) {
 
     fun photoFile(id: String, name: String): File = File(eventDir(id), name)
 
+    /** The intruder's facial embedding, kept with the event's evidence (for a police report). */
+    fun faceEmbeddingFile(id: String): File = File(eventDir(id), FACE_EMBEDDING_FILE)
+
+    /** Saves the intruder's facial embedding (format version, length, floats) next to the event's photos. */
+    fun saveFaceEmbedding(id: String, embedding: FloatArray) {
+        runCatching {
+            java.io.DataOutputStream(faceEmbeddingFile(id).outputStream().buffered()).use { out ->
+                out.writeInt(1)
+                out.writeInt(embedding.size)
+                embedding.forEach(out::writeFloat)
+            }
+        }.onFailure { Log.w(TAG, "Face embedding not saved: ${it.message}") }
+    }
+
     fun clipFiles(id: String): List<File> =
         eventDir(id).listFiles { f -> f.name.startsWith("clip_") && f.extension == "mp4" }.orEmpty()
             .sortedBy { it.nameWithoutExtension.substringAfter('_').toIntOrNull() ?: 0 }
@@ -164,6 +178,7 @@ class SecurityEventStore(context: Context) {
     companion object {
         private const val TAG = "SecurityEventStore"
         private const val EVENT_JSON = "event.json"
+        private const val FACE_EMBEDDING_FILE = "intruder_face.emb"
         const val MAX_TOTAL_BYTES = 2L * 1024 * 1024 * 1024
         const val MAX_AGE_MILLIS = 7L * 24 * 60 * 60 * 1000
     }

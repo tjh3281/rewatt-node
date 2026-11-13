@@ -23,6 +23,13 @@ import kotlinx.coroutines.launch
 enum class AlarmReason { INTRUDER, FIRE }
 
 /**
+ * Alarm SOUND on/off: the siren (intruder and fire) and the spoken "You are being recorded".
+ * MUTED FOR NOW (testing next to teammates). Set to true to bring the sound back; the alarm screen,
+ * pop-ups, vibration, torch strobe and evidence are unaffected either way.
+ */
+const val ALARM_SOUND_ON = false
+
+/**
  * Physical alarm outputs shared by the intruder and fire alarms: max ALARM-stream volume (restored
  * afterwards), a looping synthesised siren, vibration and a torch strobe. Reference-counted by
  * [AlarmReason], so everything keeps going until every active alarm has been dismissed.
@@ -52,6 +59,7 @@ class AlarmOutputs(context: Context) {
     }
 
     fun startSiren() {
+        if (!ALARM_SOUND_ON) return // muted for now (see ALARM_SOUND_ON)
         if (siren != null || active.isEmpty()) return
         runCatching {
             val samples = sirenSamples()
@@ -101,6 +109,7 @@ class AlarmOutputs(context: Context) {
     }
 
     fun raiseVolume() {
+        if (!ALARM_SOUND_ON) return // muted: leave the phone's alarm volume alone
         runCatching {
             if (savedAlarmVolume == null) savedAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
             audioManager.setStreamVolume(AudioManager.STREAM_ALARM, audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0)

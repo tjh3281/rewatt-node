@@ -99,6 +99,8 @@ class LightsController {
 
     fun toggleAircond() = mutableState.update { it.copy(aircondOn = !it.aircondOn) }
 
+    fun setAircond(on: Boolean) = mutableState.update { it.copy(aircondOn = on) }
+
     fun toggleFan() = mutableState.update { it.copy(fanOn = !it.fanOn) }
 
     /**

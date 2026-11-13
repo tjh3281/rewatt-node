@@ -145,6 +145,12 @@ class FaceRecognizer(
         return out
     }
 
+    /** The face's embedding (512 numbers, L2-normalised), e.g. to keep an intruder's for a police report. */
+    fun embedding(bitmap: Bitmap, face: DetectedFace): FloatArray {
+        ensureLoaded()
+        return embedFace(bitmap, face)
+    }
+
     private fun embedFace(bitmap: Bitmap, face: DetectedFace): FloatArray {
         val aligned = FaceAligner.align(bitmap, face.keypoints)
         return embedder!!.embed(aligned).also { aligned.recycle() }

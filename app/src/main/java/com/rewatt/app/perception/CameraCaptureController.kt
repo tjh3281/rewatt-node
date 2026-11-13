@@ -54,6 +54,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -134,6 +135,13 @@ class CameraCaptureController(
     @Volatile
     private var alarmTorch = false
 
+    /** Demo video playing in place of the camera ([LivePreviewHub.demoVideo]): the live check gets its frames. */
+    private val demoActive: Boolean get() = liveView?.demoVideo?.value != null
+
+    /** Where demo-video frames go while a live security stream runs (same callback as camera frames). */
+    @Volatile
+    private var demoAnalyzer: ((LiveFrame) -> Unit)? = null
+
     @Volatile
     private var deviceRotation: Int = Surface.ROTATION_0
 
@@ -167,6 +175,14 @@ class CameraCaptureController(
             }
             scope.launch { hub.zoomRatio.collect { withContext(Dispatchers.Main.immediate) { applyZoom() } } }
             scope.launch { hub.frontCamera.collect { front -> cameraMutex.withLock { switchLens(front) } } }
+            // Demo video: its frames go to the live security check, one at a time on the live thread.
+            scope.launch(liveExecutor.asCoroutineDispatcher()) {
+                for (signal in hub.demoFrameSignal) {
+                    val bitmap = hub.takeDemoFrame() ?: continue
+                    val analyzer = demoAnalyzer
+                    if (analyzer != null && liveSessionActive && !closed) analyzer(bitmap.toLiveFrame()) else bitmap.recycle()
+                }
+            }
         }
         scope.launch {
             while (true) {
@@ -391,6 +407,12 @@ class CameraCaptureController(
         if (closed || paused) return false
         securitySessionActive = true
         liveSessionActive = true
+        if (demoActive) {
+            // Demo video: no camera stream; the video's frames are handed to [onFrame] instead.
+            demoAnalyzer = onFrame
+            return true
+        }
+        demoAnalyzer = null
         val bound = runCatching {
             cameraMutex.withLock {
                 withContext(Dispatchers.Main.immediate) {
@@ -425,12 +447,14 @@ class CameraCaptureController(
 
     /** Stop delivering live frames but keep the camera (and torch strobe) bound, e.g. while an alarm rings. */
     fun pauseLiveFrames() {
+        demoAnalyzer = null
         liveAnalysis?.clearAnalyzer()
     }
 
     /** End the live stream and the security session; see [endSecuritySession] for [keepImageBound]. */
     suspend fun endLiveSecurity(keepImageBound: Boolean) {
         liveSessionActive = false
+        demoAnalyzer = null
         cameraMutex.withLock {
             withContext(Dispatchers.Main.immediate) {
                 liveAnalysis?.let { analysis ->
@@ -447,6 +471,7 @@ class CameraCaptureController(
     @SuppressLint("MissingPermission")
     suspend fun startRecording(file: File, withAudio: Boolean): Boolean {
         if (closed || !securitySessionActive) return false
+        if (demoActive) return false // demo video: the camera isn't what is being watched, so no camera clip
         return runCatching {
             cameraMutex.withLock {
                 if (liveSessionActive) {
@@ -609,7 +634,8 @@ class CameraCaptureController(
     }
 
     private fun applyTorch() {
-        val on = ((desiredTorch && securitySessionActive) || alarmTorch) && !torchSuppressed
+        // A demo video isn't the room the camera sees: no torch for it (the alarm strobe still works).
+        val on = ((desiredTorch && securitySessionActive && !demoActive) || alarmTorch) && !torchSuppressed
         if (on) torchLitAt = SystemClock.elapsedRealtime()
         runCatching { camera?.cameraControl?.enableTorch(on) }
     }
@@ -813,6 +839,12 @@ private fun ImageProxy.toLiveFrame(): LiveFrame {
     val raw = toBitmap()
     val upright = raw.rotate(imageInfo.rotationDegrees)
     if (upright !== raw) raw.recycle()
+    return upright.toLiveFrame()
+}
+
+/** A live-check frame from an upright bitmap (camera or demo video), with its coarse mean luma. */
+private fun Bitmap.toLiveFrame(): LiveFrame {
+    val upright = this
     var sum = 0L
     var n = 0
     val stepX = (upright.width / LUMA_GRID).coerceAtLeast(1)

@@ -20,8 +20,10 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -65,7 +67,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Shield
+import android.os.SystemClock
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.outlined.BatteryFull
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -154,6 +159,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rewatt.app.ReWattApplication
+import com.rewatt.app.energy.DemoClimate
+import androidx.compose.ui.composed
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -232,7 +239,16 @@ fun SensorScreen(
     previewZoom: Float = 1f,
     onPreviewZoom: (Float) -> Unit = {},
 ) {
-    var selectedTab by rememberSaveable { mutableStateOf(StitchTab.ENERGY) }
+    // Debug builds: `--es open_tab settings|fire|security` opens that tab (for screenshots).
+    val launchIntent = (LocalContext.current as? android.app.Activity)?.intent
+    var selectedTab by rememberSaveable {
+        mutableStateOf(
+            launchIntent?.getStringExtra("open_tab")
+                ?.takeIf { BuildConfig.DEBUG }
+                ?.let { name -> StitchTab.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
+                ?: StitchTab.ENERGY,
+        )
+    }
     var landscapeScheduleOpen by remember { mutableStateOf(false) }
 
     // Every tab follows the phone into landscape.
@@ -316,7 +332,8 @@ fun SensorScreen(
                         fireAlarmState = fireAlarmState,
                     )
                 }
-                StitchTab.SETTINGS -> ReadableWidth {
+                // Full width: the sections fill the page (two columns in landscape).
+                StitchTab.SETTINGS -> Box(Modifier.fillMaxSize()) {
                     StitchSettingsTab(
                         uiState = uiState,
                         onUpdateMqttConfig = onUpdateMqttConfig,
@@ -780,7 +797,9 @@ private fun StitchFireTab(
 ) {
     val alarm = fireAlarmState.active
     val preview = rememberGasPreview(uiState.nowMillis)
-    val gas = preview ?: uiState.sensorState.latestGas
+    // Module not attached: no reading at all ("--"), not the last one held for up to 30 s.
+    val moduleAttached = uiState.sensorState.connectionStatus == UsbConnectionStatus.Connected
+    val gas = preview ?: uiState.sensorState.latestGas?.takeIf { moduleAttached }
     val status = gasStatus(gas, uiState.nowMillis, alarm)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -1021,12 +1040,21 @@ private fun CameraTabs(
     onPreviewZoom: (Float) -> Unit,
 ) {
     val energyTab = tab == StitchTab.ENERGY
-    val usbConnected = uiState.sensorState.connectionStatus == UsbConnectionStatus.Connected
+    // Debug demo: the presenter's room climate instead of the module (tap TEMP +1 °C, HUMIDITY −1 °C).
+    val demoClimate = (LocalContext.current.applicationContext as ReWattApplication).appGraph.demoClimate
+    val demoTemp by demoClimate.tempC.collectAsStateWithLifecycle()
+    val demo = demoTemp != null
+    // In the demo the module counts as attached (its readings are the demo's), so no "not connected" card.
+    val usbConnected = demo || uiState.sensorState.connectionStatus == UsbConnectionStatus.Connected
     val telemetry = uiState.sensorState.latestTelemetry
-    val temp = telemetry?.temperatureC
-    val hum = telemetry?.humidityPercent
+    val temp = demoTemp?.toFloat() ?: telemetry?.temperatureC
+    val hum = demoTemp?.let { DemoClimate.humidityFor(it).toFloat() } ?: telemetry?.humidityPercent
     val tempAvailable = temp != null && usbConnected
     val humAvailable = hum != null && usbConnected
+    val onTempTap: (() -> Unit)? = if (demo) demoClimate::up else null
+    val onHumTap: (() -> Unit)? = if (demo) demoClimate::down else null
+    // The lights icon: shown while the smart plug is linked, and always in the demo.
+    val showLights = demo || lightsState.plugLinked
     val liveCount = uiState.perceptionState.liveCount(uiState.nowMillis)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -1066,28 +1094,50 @@ private fun CameraTabs(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (energyTab) {
-                        WideGaugeBox(
-                            label = "TEMP",
-                            value = temp ?: 0f,
-                            maxValue = 50f,
-                            centerText = if (temp != null) "${temp.toInt()}°" else "--",
-                            subText = null,
-                            colors = listOf(Color(0xFF2563EB), Color(0xFF00E676)),
-                            available = tempAvailable,
+                        // Top: TEMP and HUMIDITY as two squares side by side, the mmWave radar card
+                        // below them, then occupancy.
+                        // Column height shared: TEMP / HUMIDITY 1.25, mmWave 0.75, occupancy 1.6.
+                        Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                        )
-                        WideGaugeBox(
-                            label = "HUMIDITY",
-                            value = hum ?: 0f,
-                            maxValue = 100f,
-                            centerText = if (hum != null) "${hum.toInt()}" else "--",
-                            subText = if (hum != null) "%" else null,
-                            colors = listOf(Color(0xFF06B6D4), Color(0xFF14B8A6)),
-                            available = humAvailable,
+                                .fillMaxWidth()
+                                .weight(1.25f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            // Module not attached: "--", never the last reading frozen on screen.
+                            SquareGaugeBox(
+                                label = "TEMP",
+                                value = if (tempAvailable) temp ?: 0f else 0f,
+                                maxValue = 50f,
+                                centerText = if (tempAvailable && temp != null) "${temp.toInt()}°" else "--",
+                                subText = null,
+                                colors = listOf(Color(0xFF2563EB), Color(0xFF00E676)),
+                                available = tempAvailable,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .demoTap(onTempTap),
+                            )
+                            SquareGaugeBox(
+                                label = "HUMIDITY",
+                                value = if (humAvailable) hum ?: 0f else 0f,
+                                maxValue = 100f,
+                                centerText = if (humAvailable && hum != null) "${hum.toInt()}" else "--",
+                                subText = if (humAvailable && hum != null) "%" else null,
+                                colors = listOf(Color(0xFF06B6D4), Color(0xFF14B8A6)),
+                                available = humAvailable,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .demoTap(onHumTap),
+                            )
+                        }
+                        MmWaveCard(
+                            // "--" without the ReWatt module; attached, TRUE / FALSE following the same
+                            // count as the occupancy card below (live headcount, else the last photo).
+                            moduleAttached = usbConnected,
+                            occupied = ((liveCount ?: energyState.personCount) ?: 0) > 0,
                             modifier = Modifier
-                                .weight(1f)
+                                .weight(0.75f)
                                 .fillMaxWidth(),
                         )
                         OccupancyCard(
@@ -1099,8 +1149,9 @@ private fun CameraTabs(
                             onToggleFan = { lightsController?.toggleFan() },
                             liveCount = liveCount,
                             wide = true,
+                            showLights = showLights,
                             modifier = Modifier
-                                .weight(2f)
+                                .weight(1.6f)
                                 .fillMaxWidth(),
                         )
                     } else {
@@ -1150,6 +1201,7 @@ private fun CameraTabs(
                             securityState = securityState,
                             lights = lightsState,
                             lightsController = lightsController,
+                            showLights = showLights,
                         )
                         SensorBoxesRow(
                             temp = temp,
@@ -1160,6 +1212,8 @@ private fun CameraTabs(
                             nowMillis = uiState.nowMillis,
                             lights = lightsState,
                             liveCount = liveCount,
+                            onTempTap = onTempTap,
+                            onHumTap = onHumTap,
                         )
                     } else {
                         security.side(false)
@@ -1191,13 +1245,15 @@ private fun RoomCard(
     securityState: SecurityUiState,
     lights: LightsState,
     lightsController: LightsController?,
+    /** Show the ceiling light: the smart plug is linked, or the demo is running. */
+    showLights: Boolean = lights.plugLinked,
 ) {
     val armed = securityState.armed
     var scheduleOpen by remember { mutableStateOf(false) }
     // The room's ceiling light sits flush with the card's top edge above the room name; when it is on
     // the whole card lights up.
     // No smart plug linked: the light (and its glow) isn't shown at all; the card keeps its size.
-    val glow = lightGlow(lights.lightsOn.takeIf { lights.plugLinked })
+    val glow = lightGlow(lights.lightsOn.takeIf { showLights })
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
@@ -1214,7 +1270,7 @@ private fun RoomCard(
                 ),
         ) {
             // Tap the light to switch it (through the smart plug).
-            if (lights.plugLinked) {
+            if (showLights) {
                 CeilingLight(
                     on = lights.lightsOn,
                     glow = glow,
@@ -1287,6 +1343,8 @@ private fun SensorBoxesRow(
     nowMillis: Long,
     lights: LightsState,
     liveCount: Int?,
+    onTempTap: (() -> Unit)? = null,
+    onHumTap: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -1294,29 +1352,32 @@ private fun SensorBoxesRow(
             .height(IntrinsicSize.Min),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // Module not attached: "--", never the last reading frozen on screen.
         CompactGaugeCard(
             label = "TEMPERATURE",
-            value = temp ?: 0f,
+            value = if (tempAvailable) temp ?: 0f else 0f,
             maxValue = 50f,
-            centerText = if (temp != null) "${temp.toInt()}°" else "--",
+            centerText = if (tempAvailable && temp != null) "${temp.toInt()}°" else "--",
             subText = null,
             colors = listOf(Color(0xFF2563EB), Color(0xFF00E676)),
             available = tempAvailable,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxHeight(),
+                .fillMaxHeight()
+                .demoTap(onTempTap),
         )
         CompactGaugeCard(
             label = "HUMIDITY",
-            value = hum ?: 0f,
+            value = if (humAvailable) hum ?: 0f else 0f,
             maxValue = 100f,
-            centerText = if (hum != null) "${hum.toInt()}" else "--",
-            subText = if (hum != null) "%" else null,
+            centerText = if (humAvailable && hum != null) "${hum.toInt()}" else "--",
+            subText = if (humAvailable && hum != null) "%" else null,
             colors = listOf(Color(0xFF06B6D4), Color(0xFF14B8A6)),
             available = humAvailable,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxHeight(),
+                .fillMaxHeight()
+                .demoTap(onHumTap),
         )
         OccupancyCard(
             energy = energyState,
@@ -1429,6 +1490,59 @@ private fun WideGaugeBox(
     }
 }
 
+/** Demo only: a tap on the box runs [onTap] (no ripple, so the card looks unchanged); null = not tappable. */
+private fun Modifier.demoTap(onTap: (() -> Unit)?): Modifier =
+    if (onTap == null) this else composed {
+        clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onTap)
+    }
+
+/** Gauge box (landscape, two side by side): the label on top, the ring filling the rest. */
+@Composable
+private fun SquareGaugeBox(
+    label: String,
+    value: Float,
+    maxValue: Float,
+    centerText: String,
+    subText: String?,
+    colors: List<Color>,
+    available: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFECEEEF)),
+    ) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(6.dp)) {
+            val ring = minOf(maxWidth, maxHeight - 14.dp).coerceAtLeast(24.dp)
+            Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                BasicText(
+                    text = label,
+                    style = TextStyle(fontWeight = FontWeight.Bold, color = Color(0xFF374151), letterSpacing = 0.3.sp),
+                    maxLines = 1,
+                    softWrap = false,
+                    autoSize = TextAutoSize.StepBased(minFontSize = 5.sp, maxFontSize = 10.sp, stepSize = 0.5.sp),
+                )
+                StitchRingGauge(
+                    value = value,
+                    maxValue = maxValue,
+                    centerText = centerText,
+                    subText = subText,
+                    gradientColors = colors,
+                    isDataAvailable = available,
+                    gaugeSize = ring,
+                    centerFontSize = (ring.value * 0.26f).sp,
+                    subTextInline = true,
+                )
+            }
+        }
+    }
+}
+
 /**
  * Occupancy box: YOLO headcount + status. While the Auto-off countdown runs, the whole card turns into
  * "LIGHTS OFF IN n s". [wide] (landscape, where there is no Room card): the lights + aircond icons sit
@@ -1446,6 +1560,8 @@ private fun OccupancyCard(
     liveCount: Int?,
     modifier: Modifier = Modifier,
     wide: Boolean = false,
+    /** Show the lights icon: the smart plug is linked, or the demo is running. */
+    showLights: Boolean = lights.plugLinked,
 ) {
     // The live headcount on the preview when it is running; otherwise the last radar-triggered photo.
     val count: Int? = liveCount ?: energy.personCount
@@ -1558,6 +1674,7 @@ private fun OccupancyCard(
                         onToggleLights = onToggleLights,
                         onToggleAircond = onToggleAircond,
                         onToggleFan = onToggleFan,
+                        showLights = showLights,
                     )
                 }
             }
@@ -1687,16 +1804,18 @@ private fun SharedCameraBox(
     onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // TEMP (testing): tapping the LIVE chip flips between the back and front camera.
+    val previewHub = (LocalContext.current.applicationContext as ReWattApplication).appGraph.livePreviewHub
+    val frontCamera by previewHub.frontCamera.collectAsStateWithLifecycle()
+    // Debug demo: a video playing in place of the camera (same security check and headcount).
+    val demoVideo by previewHub.demoVideo.collectAsStateWithLifecycle()
     // While armed the camera service is up, so SECURITY shows the live view even without occupancy capture.
-    val cameraOn = perception.isRunning || (!energyTab && securityState.armed)
+    val cameraOn = demoVideo != null || perception.isRunning || (!energyTab && securityState.armed)
     val liveCheck = !energyTab && securityState.liveActive
     val frame = perception.latestFrame
     val showPhoto = energyTab && frame != null && energy.photoPinned && !energy.capturing
     val liveShown = cameraOn && !showPhoto
     val liveCount = perception.liveCount(nowMillis).takeIf { liveShown }
-    // TEMP (testing): tapping the LIVE chip flips between the back and front camera.
-    val previewHub = (LocalContext.current.applicationContext as ReWattApplication).appGraph.livePreviewHub
-    val frontCamera by previewHub.frontCamera.collectAsStateWithLifecycle()
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
@@ -1705,11 +1824,18 @@ private fun SharedCameraBox(
     ) {
         // Base feed — identical on both tabs.
         if (cameraOn) {
-            LivePreview(
-                onLivePreviewSurface = onLivePreviewSurface,
-                onLiveFrame = onLiveFrame,
-                modifier = Modifier.fillMaxSize(),
-            )
+            val demo = demoVideo
+            if (demo != null) {
+                DemoVideoView(asset = demo, onLiveFrame = onLiveFrame, modifier = Modifier.fillMaxSize())
+            } else {
+                LivePreview(
+                    onLivePreviewSurface = onLivePreviewSurface,
+                    onLiveFrame = onLiveFrame,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            // Person frames on both tabs (SECURITY's logic checks for a person too); the face frames
+            // of the live security check are drawn on top of them below.
             if (liveCount != null) LivePeopleBoxes(people = perception.livePeople, modifier = Modifier.fillMaxSize())
         } else {
             Column(
@@ -1754,7 +1880,7 @@ private fun SharedCameraBox(
                 frameWidth = securityState.liveFrameWidth,
                 frameHeight = securityState.liveFrameHeight,
                 modifier = Modifier.fillMaxSize(),
-                mirrored = frontCamera,
+                mirrored = frontCamera && demoVideo == null,
             )
         }
 
@@ -1774,17 +1900,23 @@ private fun SharedCameraBox(
             cameraOn -> "LIVE" to Color(0xFFEF4444)
             else -> null
         }
-        chip?.let { (text, dot) ->
-            if (liveShown) {
-                CameraChip(
-                    if (frontCamera) "$text · FRONT" else text,
-                    dot,
-                    Modifier.align(Alignment.TopStart),
-                    onClick = previewHub::toggleCamera,
-                )
-            } else {
-                CameraChip(text, dot, Modifier.align(Alignment.TopStart))
+        // Top-left: the status chip, and right under it the small "You are being recorded" notice.
+        Column(Modifier.align(Alignment.TopStart)) {
+            chip?.let { (text, dot) ->
+                if (liveShown) {
+                    CameraChip(
+                        if (frontCamera) "$text · FRONT" else text,
+                        dot,
+                        onClick = previewHub::toggleCamera,
+                    )
+                } else {
+                    CameraChip(text, dot)
+                }
             }
+            RecordingNoticePill(
+                noticeAtMillis = securityState.recordingNoticeAtMillis.takeIf { !securityState.alarmActive },
+                modifier = Modifier.padding(start = 10.dp, top = if (chip == null) 10.dp else 0.dp),
+            )
         }
 
         if (liveShown) {
@@ -1897,6 +2029,64 @@ private fun CameraChip(text: String, dot: Color, modifier: Modifier = Modifier, 
 }
 
 /**
+ * Small "You are being recorded" notice under the status chip: shown for [RECORDING_NOTICE_MS] when a
+ * person is confirmed (or their face stays hidden), with a blinking red dot; slides open and closed.
+ */
+@Composable
+private fun RecordingNoticePill(noticeAtMillis: Long?, modifier: Modifier = Modifier) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(noticeAtMillis) {
+        val at = noticeAtMillis ?: run { visible = false; return@LaunchedEffect }
+        val age = System.currentTimeMillis() - at
+        if (age > RECORDING_NOTICE_MS) { visible = false; return@LaunchedEffect }
+        visible = true
+        delay(RECORDING_NOTICE_MS - age.coerceAtLeast(0))
+        visible = false
+    }
+    val blink by rememberInfiniteTransition(label = "recNotice").animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
+        label = "recDot",
+    )
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(tween(250)) + fadeIn(tween(250)),
+        exit = shrinkVertically(tween(250)) + fadeOut(tween(250)),
+        modifier = modifier,
+    ) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Color(0xE6B91C1C))
+                .padding(horizontal = 9.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .graphicsLayer { alpha = blink }
+                    .clip(CircleShape)
+                    .background(Color.White),
+            )
+            Spacer(Modifier.width(5.dp))
+            Icon(Icons.Outlined.Videocam, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(
+                stringResource(R.string.recording_notice_title),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+private const val RECORDING_NOTICE_MS = 6_000L
+
+/**
  * Last frame of each live preview box. Right before a tab switch every visible preview freezes what
  * it shows ([captureAll]); the incoming tab shows that still frame until its own camera stream is
  * rendering again, so the switch has no black flash.
@@ -1904,10 +2094,17 @@ private fun CameraChip(text: String, dot: Color, modifier: Modifier = Modifier, 
 internal object PreviewFrameCache {
     const val LIVE_KEY = "live"
 
-    private val frames = mutableMapOf<String, Bitmap>()
+    /** A frame older than this is never shown: it would be a stale picture, not a smooth hand-over. */
+    private const val MAX_AGE_MS = 3_000L
+
+    private val frames = mutableMapOf<String, Pair<Bitmap, Long>>()
     private val snapshotters = mutableMapOf<String, () -> Bitmap?>()
 
-    fun get(key: String): Bitmap? = frames[key]
+    /** The frame captured right before this tab switch, if it is that recent; it is handed over only once. */
+    fun take(key: String): Bitmap? {
+        val (frame, at) = frames.remove(key) ?: return null
+        return frame.takeIf { SystemClock.elapsedRealtime() - at <= MAX_AGE_MS }
+    }
 
     fun register(key: String, snapshot: () -> Bitmap?) {
         snapshotters[key] = snapshot
@@ -1919,7 +2116,8 @@ internal object PreviewFrameCache {
 
     /** Main thread, right before the tab changes. */
     fun captureAll() {
-        snapshotters.forEach { (key, snapshot) -> runCatching { snapshot() }.getOrNull()?.let { frames[key] = it } }
+        val now = SystemClock.elapsedRealtime()
+        snapshotters.forEach { (key, snapshot) -> runCatching { snapshot() }.getOrNull()?.let { frames[key] = it to now } }
     }
 }
 
@@ -1952,10 +2150,16 @@ internal fun LivePreview(
             scaleType = PreviewView.ScaleType.FILL_CENTER
         }
     }
-    val frozen = remember { PreviewFrameCache.get(PreviewFrameCache.LIVE_KEY) }
+    // The hand-over frame from the tab just left (only if captured within the last few seconds).
+    val frozen = remember { PreviewFrameCache.take(PreviewFrameCache.LIVE_KEY) }
     var streaming by remember { mutableStateOf(false) }
+    // Once this view has streamed, the hand-over frame is never shown again (no stale picture later).
+    var streamedOnce by remember { mutableStateOf(false) }
     DisposableEffect(previewView, lifecycleOwner) {
-        val observer = Observer<PreviewView.StreamState> { streaming = it == PreviewView.StreamState.STREAMING }
+        val observer = Observer<PreviewView.StreamState> {
+            streaming = it == PreviewView.StreamState.STREAMING
+            if (streaming) streamedOnce = true
+        }
         previewView.previewStreamState.observe(lifecycleOwner, observer)
         val snapshot: () -> Bitmap? = { previewView.bitmap }
         PreviewFrameCache.register(PreviewFrameCache.LIVE_KEY, snapshot)
@@ -1984,9 +2188,40 @@ internal fun LivePreview(
             }
         }
     }
+    // The stream stopped (camera rebinding, busy or restarting) for more than a moment: say so instead of
+    // leaving a still picture on screen that looks live.
+    var stalled by remember { mutableStateOf(false) }
+    LaunchedEffect(streaming) {
+        stalled = false
+        if (!streaming) {
+            delay(STALL_COVER_MS)
+            stalled = true
+        }
+    }
     Box(modifier) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
-        FrozenFrame(frame = frozen, visible = !streaming)
+        FrozenFrame(frame = frozen, visible = !streaming && !streamedOnce && !stalled)
+        if (stalled) CameraStartingCover()
+    }
+}
+
+/** How long the camera stream may pause (e.g. a quick rebind) before the "Starting camera…" cover shows. */
+private const val STALL_COVER_MS = 1_500L
+
+/** Dark cover with a spinner while the camera stream is (re)starting: never a frozen picture. */
+@Composable
+private fun CameraStartingCover() {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF111827)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.height(8.dp))
+            Text("Starting camera…", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFD1D5DB))
+        }
     }
 }
 
@@ -2424,14 +2659,8 @@ private fun StitchSettingsTab(
     var pass by remember { mutableStateOf("") }
     var roomId by remember { mutableStateOf(uiState.roomId) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text("Settings", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
+    // The page is built from sections, laid out in one column (portrait) or two (landscape) below.
+    val mqttSection: @Composable () -> Unit = {
         Column {
             Text("MQTT Configuration", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
             Text("Connect your ReWatt unit to your local broker.", fontSize = 13.sp, color = Color(0xFF6B7280))
@@ -2545,10 +2774,9 @@ private fun StitchSettingsTab(
             }
         }
 
-        // Room 1 lights: Tapo smart plug (backup login / IP)
-        smartPlugContent()
-
-        // Clean Single "Quick Setup Guide" Outlined Button
+    }
+    // Clean Single "Quick Setup Guide" Outlined Button
+    val guideButton: @Composable () -> Unit = {
         OutlinedButton(
             onClick = onOpenSetupGuide,
             modifier = Modifier
@@ -2561,11 +2789,9 @@ private fun StitchSettingsTab(
             Spacer(Modifier.width(8.dp))
             Text("Quick Setup Guide", fontSize = 15.sp, fontWeight = FontWeight.Bold)
         }
-
-        // Security camera settings + permissions (moved here from the SECURITY tab)
-        securitySettingsContent()
-
-        // Diagnostics (formerly the DEBUG tab) — collapsed by default to keep Settings tidy
+    }
+    // Diagnostics (formerly the DEBUG tab) — collapsed by default to keep Settings tidy
+    val diagnostics: @Composable () -> Unit = {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2590,6 +2816,46 @@ private fun StitchSettingsTab(
             }
         }
         if (diagnosticsExpanded) diagnosticsContent()
-        Spacer(Modifier.height(8.dp))
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // Wide screen (landscape): the sections spread over two columns across the whole width, so no
+        // empty space is left on the left and right.
+        val twoColumns = maxWidth >= 700.dp
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("Settings", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
+            if (twoColumns) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        mqttSection()
+                        // Room 1 lights: Tapo smart plug (backup login / IP)
+                        smartPlugContent()
+                        guideButton()
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        // Security camera settings + permissions (moved here from the SECURITY tab)
+                        securitySettingsContent()
+                        diagnostics()
+                    }
+                }
+            } else {
+                mqttSection()
+                smartPlugContent()
+                guideButton()
+                securitySettingsContent()
+                diagnostics()
+            }
+            Spacer(Modifier.height(8.dp))
+        }
     }
 }

@@ -72,7 +72,7 @@ fun SmartPlugSettingsSection(link: TapoLink) {
     )
 
     Column {
-        Text("Smart Switch", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
+        Text("TAPO Smart Home", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF09090B))
         Text("The Tapo plug that switches the Room 1 lights.", fontSize = 13.sp, color = Color(0xFF6B7280))
     }
     Card(

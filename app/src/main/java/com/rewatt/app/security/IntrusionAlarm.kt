@@ -63,9 +63,22 @@ class IntrusionAlarm(
      * Deterrent only — "You are being recorded" at max alarm volume, no siren, no red screen.
      * Used when a person is seen but their face isn't (back turned, fully covered, too far).
      */
+    /**
+     * The small "You are being recorded" pop-up only (no voice): shown first, as soon as a person is
+     * confirmed (the event starts), before the face check decides family / stranger.
+     */
+    fun showRecordingNotice() {
+        scope.launch {
+            if (alarmActive) return@launch
+            stateHolder.update { it.copy(recordingNoticeAtMillis = System.currentTimeMillis()) }
+        }
+    }
+
     fun announceRecording() {
         scope.launch {
             if (alarmActive) return@launch // the full alarm already speaks the deterrent
+            // The small in-app alert shows together with the voice.
+            stateHolder.update { it.copy(recordingNoticeAtMillis = System.currentTimeMillis()) }
             outputs.raiseVolume()
             voice.speak {
                 scope.launch { outputs.restoreVolumeIfIdle() }
